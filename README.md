@@ -50,7 +50,7 @@ bornengine run main.ts
 Examples:
 
 ```sh
-bornengine new MyGame --package-manager npm --engine-version 0.4.16
+bornengine new MyGame --package-manager npm --engine-version 0.4.17
 bornengine build main.ts --name my-game --os linux
 bornengine build main.ts --target ios-simulator
 bornengine dev main.ts --watch
@@ -78,7 +78,7 @@ To switch an existing game between a local checkout and a release:
 
 ```sh
 bornengine engine use ../BornEngine
-bornengine engine use 0.4.16
+bornengine engine use 0.4.17
 ```
 
 ## Targets and output
@@ -100,7 +100,7 @@ Build outputs are isolated under `.bornengine/builds/`. Watch-mode output uses `
 
 ## Releases
 
-The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.1.0` produces standalone release assets for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. Alternatively, install from GitHub with Cargo as shown above.
+The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.1.1` produces standalone release assets for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. Alternatively, install from GitHub with Cargo as shown above.
 
 ## License
 
