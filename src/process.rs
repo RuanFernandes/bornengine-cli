@@ -1,7 +1,7 @@
 use crate::platform::ResolvedTarget;
 use anyhow::{Context, Result, bail};
-use std::ffi::OsString;
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 pub fn perry_compile_args(
@@ -55,7 +55,7 @@ pub fn captured_command(
     cwd: Option<&Path>,
     verbose: bool,
 ) -> Result<Output> {
-    let mut command = Command::new(program);
+    let mut command = Command::new(program_for_spawn(program));
     command
         .args(args)
         .stdout(Stdio::piped())
@@ -77,7 +77,7 @@ pub fn inherited_command(
     cwd: Option<&Path>,
     verbose: bool,
 ) -> Result<i32> {
-    let mut command = Command::new(program);
+    let mut command = Command::new(program_for_spawn(program));
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -122,20 +122,143 @@ pub fn executable_in_path(executable: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    std::env::split_paths(&path).any(|directory| {
-        if cfg!(windows) {
-            let candidate = directory.join(executable);
-            if candidate.is_file() {
-                return true;
-            }
-            let extensions =
-                std::env::var_os("PATHEXT").unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".into());
-            extensions
-                .to_string_lossy()
-                .split(';')
-                .any(|extension| directory.join(format!("{executable}{extension}")).is_file())
-        } else {
-            directory.join(executable).is_file()
+    find_program_in_path(OsStr::new(executable), &path, &path_extensions()).is_some()
+}
+
+fn program_for_spawn(program: &str) -> OsString {
+    #[cfg(windows)]
+    {
+        let Some(path) = std::env::var_os("PATH") else {
+            return OsString::from(program);
+        };
+        return resolve_command_program(OsStr::new(program), &path, &path_extensions());
+    }
+
+    #[cfg(not(windows))]
+    OsString::from(program)
+}
+
+#[cfg(any(windows, test))]
+fn resolve_command_program(
+    program: &OsStr,
+    search_path: &OsStr,
+    extensions: &[OsString],
+) -> OsString {
+    let path = Path::new(program);
+    if path.components().count() != 1 || path.extension().is_some() {
+        return program.to_os_string();
+    }
+
+    find_program_in_path(program, search_path, extensions)
+        .map(PathBuf::into_os_string)
+        .unwrap_or_else(|| program.to_os_string())
+}
+
+fn find_program_in_path(
+    program: &OsStr,
+    search_path: &OsStr,
+    extensions: &[OsString],
+) -> Option<PathBuf> {
+    for directory in std::env::split_paths(search_path) {
+        let candidate = directory.join(program);
+        if candidate.is_file() {
+            return Some(make_path_absolute(candidate));
         }
-    })
+
+        for extension in extensions {
+            let mut filename = program.to_os_string();
+            filename.push(extension);
+            let candidate = directory.join(filename);
+            if candidate.is_file() {
+                return Some(make_path_absolute(candidate));
+            }
+        }
+    }
+
+    None
+}
+
+fn make_path_absolute(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|current_dir| current_dir.join(&path))
+            .unwrap_or(path)
+    }
+}
+
+fn path_extensions() -> Vec<OsString> {
+    #[cfg(windows)]
+    {
+        let configured =
+            std::env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(".COM;.EXE;.BAT;.CMD"));
+        let supported = [".COM", ".EXE", ".BAT", ".CMD"];
+        let mut extensions = configured
+            .to_string_lossy()
+            .split(';')
+            .map(str::trim)
+            .filter(|extension| {
+                supported
+                    .iter()
+                    .any(|supported| extension.eq_ignore_ascii_case(supported))
+            })
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        for extension in supported {
+            if !extensions
+                .iter()
+                .any(|existing| existing.to_string_lossy().eq_ignore_ascii_case(extension))
+            {
+                extensions.push(OsString::from(extension));
+            }
+        }
+
+        extensions
+    }
+
+    #[cfg(not(windows))]
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_command_program;
+    use std::env;
+    use std::ffi::{OsStr, OsString};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn path_value(directory: &Path) -> OsString {
+        env::join_paths([directory]).unwrap()
+    }
+
+    #[test]
+    fn resolves_windows_command_shim_to_its_pathext_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let npm_cmd = directory.path().join("npm.cmd");
+        fs::write(&npm_cmd, "@echo off\r\n").unwrap();
+        let path = path_value(directory.path());
+        let extensions = [".com", ".exe", ".bat", ".cmd"].map(OsString::from);
+
+        let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
+
+        assert_eq!(PathBuf::from(resolved), npm_cmd);
+    }
+
+    #[test]
+    fn command_resolution_preserves_pathext_order_when_multiple_shims_exist() {
+        let directory = tempfile::tempdir().unwrap();
+        let npm_exe = directory.path().join("npm.exe");
+        let npm_cmd = directory.path().join("npm.cmd");
+        fs::write(&npm_exe, "").unwrap();
+        fs::write(&npm_cmd, "").unwrap();
+        let path = path_value(directory.path());
+        let extensions = [".cmd", ".exe"].map(OsString::from);
+
+        let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
+
+        assert_eq!(PathBuf::from(resolved), npm_cmd);
+    }
 }
