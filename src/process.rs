@@ -159,9 +159,11 @@ fn find_program_in_path(
     search_path: &OsStr,
     extensions: &[OsString],
 ) -> Option<PathBuf> {
+    let has_explicit_extension = Path::new(program).extension().is_some();
+
     for directory in std::env::split_paths(search_path) {
         let candidate = directory.join(program);
-        if candidate.is_file() {
+        if (has_explicit_extension || extensions.is_empty()) && candidate.is_file() {
             return Some(make_path_absolute(candidate));
         }
 
@@ -245,6 +247,53 @@ mod tests {
         let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
 
         assert_eq!(PathBuf::from(resolved), npm_cmd);
+    }
+
+    #[test]
+    fn prefers_windows_command_shim_over_extensionless_unix_launcher() {
+        let directory = tempfile::tempdir().unwrap();
+        let unix_launcher = directory.path().join("npm");
+        let windows_launcher = directory.path().join("npm.cmd");
+        fs::write(&unix_launcher, "#!/bin/sh\necho npm\n").unwrap();
+        fs::write(&windows_launcher, "@echo off\r\n").unwrap();
+        let path = path_value(directory.path());
+        let extensions = [".com", ".exe", ".bat", ".cmd"].map(OsString::from);
+
+        let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
+
+        assert_eq!(PathBuf::from(resolved), windows_launcher);
+    }
+
+    #[test]
+    fn does_not_resolve_extensionless_unix_launcher_as_windows_command() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("npm"), "#!/bin/sh\necho npm\n").unwrap();
+        let path = path_value(directory.path());
+        let extensions = [".com", ".exe", ".bat", ".cmd"].map(OsString::from);
+
+        let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
+
+        assert_eq!(resolved, OsString::from("npm"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn launches_the_selected_windows_command_shim() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("npm"), "#!/bin/sh\necho wrong shim\n").unwrap();
+        let windows_launcher = directory.path().join("npm.cmd");
+        fs::write(&windows_launcher, "@echo off\r\necho windows shim\r\n").unwrap();
+        let path = path_value(directory.path());
+        let extensions = [".com", ".exe", ".bat", ".cmd"].map(OsString::from);
+        let resolved = resolve_command_program(OsStr::new("npm"), &path, &extensions);
+
+        let output = std::process::Command::new(resolved).output().unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "windows shim"
+        );
     }
 
     #[test]
