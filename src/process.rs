@@ -131,7 +131,7 @@ fn program_for_spawn(program: &str) -> OsString {
         let Some(path) = std::env::var_os("PATH") else {
             return OsString::from(program);
         };
-        return resolve_command_program(OsStr::new(program), &path, &path_extensions());
+        resolve_command_program(OsStr::new(program), &path, &path_extensions())
     }
 
     #[cfg(not(windows))]
