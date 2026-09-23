@@ -1,5 +1,5 @@
 use crate::package_manager::PackageManager;
-use clap::{ArgAction, Args, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -20,53 +20,102 @@ pub struct Cli {
 pub enum Commands {
     /// Create a new BornEngine game project.
     New {
+        #[arg(help = "Name of the new project directory")]
         project_name: String,
-        #[arg(long, alias = "pm", value_enum)]
+        #[arg(
+            long,
+            alias = "pm",
+            value_enum,
+            help = "Package manager to install dependencies with (default: pnpm)"
+        )]
         package_manager: Option<PackageManager>,
-        #[arg(short = 'e', long)]
+        #[arg(
+            short = 'e',
+            long,
+            help = "Exact stable BornEngine version (default: latest)"
+        )]
         engine_version: Option<String>,
-        #[arg(long)]
+        #[arg(long, alias = "engine", help = "Path to a local BornEngine checkout")]
         engine_path: Option<PathBuf>,
     },
     /// Initialize a BornEngine game in the current directory.
     Init {
-        #[arg(long, alias = "pm", value_enum)]
+        #[arg(
+            long,
+            alias = "pm",
+            value_enum,
+            help = "Package manager to install dependencies with (default: pnpm)"
+        )]
         package_manager: Option<PackageManager>,
-        #[arg(short = 'e', long)]
+        #[arg(
+            short = 'e',
+            long,
+            help = "Exact stable BornEngine version (default: latest)"
+        )]
         engine_version: Option<String>,
-        #[arg(long)]
+        #[arg(long, alias = "engine", help = "Path to a local BornEngine checkout")]
         engine_path: Option<PathBuf>,
     },
     /// Compile a game for a platform.
     Build {
+        #[arg(help = "TypeScript entry file")]
         entry_file: PathBuf,
-        #[arg(short = 'n', long)]
+        #[arg(short = 'n', long, help = "Output file name")]
         name: Option<String>,
-        #[arg(short = 'o', long, conflicts_with = "target")]
+        #[arg(
+            short = 'o',
+            long,
+            conflicts_with = "target",
+            help = "Friendly OS target (defaults to the current host)"
+        )]
         os: Option<String>,
-        #[arg(long, conflicts_with = "os")]
+        #[arg(
+            long,
+            conflicts_with = "os",
+            help = "Exact target name advertised by Perry"
+        )]
         target: Option<String>,
     },
     /// Compile and run a game for the current host.
     Run {
+        #[arg(help = "TypeScript entry file")]
         entry_file: PathBuf,
-        #[arg(short = 'n', long)]
+        #[arg(short = 'n', long, help = "Output file name")]
         name: Option<String>,
-        #[arg(short = 'o', long, conflicts_with = "target")]
+        #[arg(
+            short = 'o',
+            long,
+            conflicts_with = "target",
+            help = "Friendly OS target (defaults to the current host)"
+        )]
         os: Option<String>,
-        #[arg(long, conflicts_with = "os")]
+        #[arg(
+            long,
+            conflicts_with = "os",
+            help = "Exact target name advertised by Perry"
+        )]
         target: Option<String>,
         #[arg(last = true, allow_hyphen_values = true)]
         program_args: Vec<String>,
     },
     /// Build and run a game, optionally restarting it when files change.
     Dev {
+        #[arg(help = "TypeScript entry file")]
         entry_file: PathBuf,
-        #[arg(short = 'n', long)]
+        #[arg(short = 'n', long, help = "Output file name")]
         name: Option<String>,
-        #[arg(short = 'o', long, conflicts_with = "target")]
+        #[arg(
+            short = 'o',
+            long,
+            conflicts_with = "target",
+            help = "Friendly OS target (defaults to the current host)"
+        )]
         os: Option<String>,
-        #[arg(long, conflicts_with = "os")]
+        #[arg(
+            long,
+            conflicts_with = "os",
+            help = "Exact target name advertised by Perry"
+        )]
         target: Option<String>,
         #[arg(long, help = "Watch source files and restart after changes")]
         watch: bool,
@@ -99,10 +148,20 @@ pub enum Commands {
     },
     /// Check TypeScript compatibility without creating a binary.
     Check {
+        #[arg(help = "TypeScript entry file")]
         entry_file: PathBuf,
-        #[arg(short = 'o', long, conflicts_with = "target")]
+        #[arg(
+            short = 'o',
+            long,
+            conflicts_with = "target",
+            help = "Friendly OS target (defaults to the current host)"
+        )]
         os: Option<String>,
-        #[arg(long, conflicts_with = "os")]
+        #[arg(
+            long,
+            conflicts_with = "os",
+            help = "Exact target name advertised by Perry"
+        )]
         target: Option<String>,
     },
 }
@@ -131,14 +190,4 @@ pub enum ConfigCommands {
     Get { key: String },
     /// List all global configuration values.
     List,
-}
-
-#[derive(Debug, Args)]
-pub struct ProjectOptions {
-    #[arg(long, alias = "pm", value_enum)]
-    pub package_manager: Option<PackageManager>,
-    #[arg(short = 'e', long)]
-    pub engine_version: Option<String>,
-    #[arg(long)]
-    pub engine_path: Option<PathBuf>,
 }

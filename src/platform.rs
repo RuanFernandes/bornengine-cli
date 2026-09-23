@@ -103,6 +103,7 @@ pub enum BuildTarget {
     WearOS,
     Web,
     Wasm,
+    Other,
 }
 
 impl BuildTarget {
@@ -112,6 +113,7 @@ impl BuildTarget {
             "windows" => Ok(Self::Windows),
             "macos" => Ok(Self::MacOS),
             "android" => Ok(Self::Android),
+            target if target.starts_with("android-") => Ok(Self::Android),
             "ios" => Ok(Self::IOS),
             "ios-simulator" => Ok(Self::IosSimulator),
             "tvos" => Ok(Self::TvOS),
@@ -123,7 +125,7 @@ impl BuildTarget {
             "wearos" => Ok(Self::WearOS),
             "web" => Ok(Self::Web),
             "wasm" => Ok(Self::Wasm),
-            _ => bail!("unsupported Perry target `{value}`"),
+            _ => Ok(Self::Other),
         }
     }
 
@@ -144,6 +146,7 @@ impl BuildTarget {
             Self::WearOS => Some("wearos"),
             Self::Web => Some("web"),
             Self::Wasm => Some("wasm"),
+            Self::Other => None,
         }
     }
 
@@ -212,17 +215,18 @@ pub fn resolve_target(
         Some("visionos") => BuildTarget::VisionOS,
         Some("web") => BuildTarget::Web,
         Some(other) => bail!("unsupported operating system `{other}`"),
-        None => match host {
-            HostPlatform::Linux => BuildTarget::Linux,
-            HostPlatform::Windows => BuildTarget::Windows,
-            HostPlatform::MacOS => {
-                return Ok(ResolvedTarget {
-                    target: BuildTarget::MacOS,
-                    perry_target: None,
-                });
-            }
-            HostPlatform::Other => bail!("the current host platform is not supported"),
-        },
+        None => {
+            let target = match host {
+                HostPlatform::Linux => BuildTarget::Linux,
+                HostPlatform::Windows => BuildTarget::Windows,
+                HostPlatform::MacOS => BuildTarget::MacOS,
+                HostPlatform::Other => bail!("the current host platform is not supported"),
+            };
+            return Ok(ResolvedTarget {
+                target,
+                perry_target: None,
+            });
+        }
     };
 
     let perry_target = platform

@@ -1,5 +1,6 @@
 use bornengine_cli::cli::{Cli, Commands};
 use clap::Parser;
+use std::path::Path;
 
 #[test]
 fn build_accepts_name_and_user_friendly_os() {
@@ -59,7 +60,30 @@ fn new_accepts_package_manager_and_local_engine_path() {
             package_manager: Some(package_manager),
             engine_path: Some(path),
             ..
-        } if package_manager.as_str() == "npm" && path == std::path::PathBuf::from("../BornEngine")
+        } if package_manager.as_str() == "npm" && path.as_path() == Path::new("../BornEngine")
+    ));
+}
+
+#[test]
+fn new_accepts_short_package_manager_and_engine_aliases() {
+    let cli = Cli::try_parse_from([
+        "bornengine",
+        "new",
+        "MyGame",
+        "--pm",
+        "yarn",
+        "--engine",
+        "../BornEngine",
+    ])
+    .unwrap();
+
+    assert!(matches!(
+        cli.command,
+        Commands::New {
+            package_manager: Some(package_manager),
+            engine_path: Some(path),
+            ..
+        } if package_manager.as_str() == "yarn" && path.as_path() == Path::new("../BornEngine")
     ));
 }
 

@@ -1,5 +1,5 @@
 use bornengine_cli::package_manager::PackageManager;
-use bornengine_cli::platform::BuildTarget;
+use bornengine_cli::platform::{HostPlatform, PerryCapabilities, TargetRequest, resolve_target};
 use bornengine_cli::process::{perry_check_args, perry_compile_args, perry_dev_args};
 use std::path::Path;
 
@@ -23,10 +23,19 @@ fn package_manager_install_commands_are_argument_arrays() {
 
 #[test]
 fn compile_args_use_perrys_long_output_flag_and_target() {
+    let target = resolve_target(
+        &TargetRequest {
+            os: Some("windows".to_owned()),
+            target: None,
+        },
+        &PerryCapabilities::from_compile_help("Target platform: windows (default: native)"),
+        HostPlatform::Linux,
+    )
+    .unwrap();
     let args = perry_compile_args(
         Path::new("main.ts"),
         Path::new(".bornengine/builds/my-game.exe"),
-        &BuildTarget::Windows,
+        &target,
         false,
     );
 
@@ -45,16 +54,56 @@ fn compile_args_use_perrys_long_output_flag_and_target() {
 
 #[test]
 fn macos_compile_uses_perrys_native_host_target() {
+    let target = resolve_target(
+        &TargetRequest {
+            os: None,
+            target: None,
+        },
+        &PerryCapabilities::default(),
+        HostPlatform::MacOS,
+    )
+    .unwrap();
     let args = perry_compile_args(
         Path::new("main.ts"),
         Path::new(".bornengine/builds/game"),
-        &BuildTarget::MacOS,
+        &target,
         false,
     );
 
     assert_eq!(
         args,
         ["compile", "main.ts", "--output", ".bornengine/builds/game"]
+    );
+}
+
+#[test]
+fn compile_args_preserve_an_exact_target_not_known_to_the_cli() {
+    let target = resolve_target(
+        &TargetRequest {
+            os: None,
+            target: Some("android-arm64".to_owned()),
+        },
+        &PerryCapabilities::from_compile_help("Target platform: android-arm64 (default: native)"),
+        HostPlatform::Linux,
+    )
+    .unwrap();
+    let args = perry_compile_args(
+        Path::new("main.ts"),
+        Path::new("build/game"),
+        &target,
+        false,
+    );
+
+    assert_eq!(
+        args,
+        [
+            "compile",
+            "main.ts",
+            "--output",
+            "build/game",
+            "--target",
+            "android-arm64"
+        ]
     );
 }
 

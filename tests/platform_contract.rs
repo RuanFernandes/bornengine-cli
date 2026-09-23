@@ -38,8 +38,23 @@ fn defaults_to_host_and_maps_friendly_linux_option() {
     )
     .unwrap();
 
-    assert_eq!(implicit, explicit);
+    assert_eq!(implicit.target, BuildTarget::Linux);
+    assert_eq!(implicit.perry_target, None);
     assert_eq!(explicit.target, BuildTarget::Linux);
+    assert_eq!(explicit.perry_target.as_deref(), Some("linux"));
+}
+
+#[test]
+fn implicit_host_build_does_not_require_a_named_cross_target() {
+    let implicit = resolve_target(
+        &TargetRequest::default(),
+        &PerryCapabilities::default(),
+        HostPlatform::Linux,
+    )
+    .unwrap();
+
+    assert_eq!(implicit.target, BuildTarget::Linux);
+    assert_eq!(implicit.perry_target, None);
 }
 
 #[test]
@@ -75,6 +90,26 @@ fn rejects_targets_not_advertised_by_installed_perry() {
             .to_string()
             .contains("does not advertise")
     );
+}
+
+#[test]
+fn accepts_new_exact_targets_only_when_advertised_by_perry() {
+    let capabilities = PerryCapabilities::from_compile_help(
+        "Target platform: android, android-arm64, linux (default: native)",
+    );
+
+    let exact = resolve_target(
+        &TargetRequest {
+            os: None,
+            target: Some("android-arm64".to_owned()),
+        },
+        &capabilities,
+        HostPlatform::Linux,
+    )
+    .unwrap();
+
+    assert_eq!(exact.target, BuildTarget::Android);
+    assert_eq!(exact.perry_target.as_deref(), Some("android-arm64"));
 }
 
 #[test]

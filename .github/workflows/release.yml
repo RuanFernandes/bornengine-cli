@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            asset: linux-x86_64
+            executable: bornengine
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: windows-x86_64
+            executable: bornengine.exe
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: macos-x86_64
+            executable: bornengine
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            asset: macos-aarch64
+            executable: bornengine
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install stable Rust and target
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add "$RUST_TARGET"
+      - name: Build release executable
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: cargo build --locked --release --target "$RUST_TARGET"
+      - name: Stage release asset
+        shell: bash
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+          ASSET_NAME: bornengine-${{ matrix.asset }}
+          EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          mkdir -p dist
+          cp "target/$RUST_TARGET/release/$EXECUTABLE" "dist/$ASSET_NAME${EXECUTABLE##bornengine}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bornengine-${{ matrix.asset }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create release and upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

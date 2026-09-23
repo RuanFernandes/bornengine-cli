@@ -1,4 +1,5 @@
 /target/
 /.bornengine/
 /.superpowers/
+/dist/
 *.tmp

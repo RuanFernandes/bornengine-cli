@@ -1,4 +1,4 @@
-use crate::platform::BuildTarget;
+use crate::platform::ResolvedTarget;
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::path::Path;
@@ -7,7 +7,7 @@ use std::process::{Command, Output, Stdio};
 pub fn perry_compile_args(
     entry: &Path,
     output: &Path,
-    target: &BuildTarget,
+    target: &ResolvedTarget,
     verbose: bool,
 ) -> Vec<OsString> {
     let mut args = vec![
@@ -16,7 +16,7 @@ pub fn perry_compile_args(
         "--output".into(),
         output.as_os_str().to_owned(),
     ];
-    if let Some(target) = target.perry_target() {
+    if let Some(target) = target.perry_target.as_deref() {
         args.extend(["--target".into(), target.into()]);
     }
     if verbose {
