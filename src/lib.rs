@@ -8,3 +8,4 @@ pub mod package_manager;
 pub mod platform;
 pub mod process;
 pub mod project;
+pub mod ui;

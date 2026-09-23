@@ -7,6 +7,7 @@ use crate::engine::{
 use crate::package_manager::PackageManager;
 use crate::process::{executable_in_path, inherited_command};
 use crate::project::{find_project_root, read_package_json, write_package_json};
+use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::ffi::OsString;
@@ -46,14 +47,22 @@ pub fn current() -> Result<i32> {
     let package = read_package_json(&root)?;
     let dependency = engine_dependency(&package)?
         .context("this project does not declare a BornEngine dependency")?;
-    println!("{} {}", dependency.package_name, dependency.spec);
+    println!(
+        "{} {}",
+        ui::paint(&dependency.package_name, Tone::Accent),
+        dependency.spec
+    );
     println!("Source: {}", dependency_source(&dependency.spec));
     Ok(0)
 }
 
 pub fn list() -> Result<i32> {
     for release in list_engine_releases()? {
-        println!("{} {}", release.version, release.package_name);
+        println!(
+            "{} {}",
+            ui::paint(release.version, Tone::Accent),
+            release.package_name
+        );
     }
     Ok(0)
 }
@@ -82,7 +91,10 @@ fn remove(version: Option<&str>, verbose: bool) -> Result<i32> {
     ensure_manager(manager)?;
     let mut package = read_package_json(&root)?;
     let Some(current) = engine_dependency(&package)? else {
-        println!("This project has no BornEngine dependency.");
+        println!(
+            "{}",
+            ui::paint("This project has no BornEngine dependency.", Tone::Info)
+        );
         return Ok(0);
     };
     if let Some(version) = version {
@@ -95,7 +107,13 @@ fn remove(version: Option<&str>, verbose: bool) -> Result<i32> {
     }
     remove_engine_dependency(&mut package)?;
     write_package_json(&root, &package)?;
-    println!("Removed {} {}", current.package_name, current.spec);
+    println!(
+        "{}",
+        ui::paint(
+            format!("Removed {} {}", current.package_name, current.spec),
+            Tone::Success
+        )
+    );
     install(manager, &root, verbose)
 }
 
@@ -109,8 +127,14 @@ fn set_dependency(
     let previous = engine_dependency(&package)?;
     if previous.as_ref() == Some(&dependency) {
         println!(
-            "BornEngine dependency is already {} {}",
-            dependency.package_name, dependency.spec
+            "{}",
+            ui::paint(
+                format!(
+                    "BornEngine dependency is already {} {}",
+                    dependency.package_name, dependency.spec
+                ),
+                Tone::Info
+            )
         );
         return Ok(0);
     }
@@ -118,13 +142,25 @@ fn set_dependency(
     write_package_json(root, &package)?;
     if let Some(previous) = previous {
         println!(
-            "Updated BornEngine: {} {} -> {} {}",
-            previous.package_name, previous.spec, dependency.package_name, dependency.spec
+            "{}",
+            ui::paint(
+                format!(
+                    "Updated BornEngine: {} {} -> {} {}",
+                    previous.package_name, previous.spec, dependency.package_name, dependency.spec
+                ),
+                Tone::Success
+            )
         );
     } else {
         println!(
-            "Added BornEngine: {} {}",
-            dependency.package_name, dependency.spec
+            "{}",
+            ui::paint(
+                format!(
+                    "Added BornEngine: {} {}",
+                    dependency.package_name, dependency.spec
+                ),
+                Tone::Success
+            )
         );
     }
     install(manager, root, verbose)

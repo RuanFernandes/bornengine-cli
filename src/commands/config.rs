@@ -1,5 +1,6 @@
 use crate::cli::ConfigCommands;
 use crate::config::Config;
+use crate::ui::{self, Tone};
 use anyhow::Result;
 
 pub fn execute(command: ConfigCommands) -> Result<i32> {
@@ -9,7 +10,10 @@ pub fn execute(command: ConfigCommands) -> Result<i32> {
         ConfigCommands::Set { key, value } => {
             config.set(&key, &value)?;
             config.save(&path)?;
-            println!("Set {key} = {value}");
+            println!(
+                "{}",
+                ui::paint(format!("Set {key} = {value}"), Tone::Success)
+            );
         }
         ConfigCommands::Get { key } => match config.get(&key) {
             Some(value) => println!("{value}"),

@@ -6,6 +6,7 @@ use crate::package_manager::PackageManager;
 use crate::platform::{HostPlatform, PerryCapabilities, TargetRequest, resolve_target};
 use crate::process::{captured_command, executable_in_path};
 use crate::project::{find_project_root, project_name, read_package_json};
+use crate::ui::{self, Tone};
 use anyhow::{Context, Result};
 use serde_json::Value;
 use std::ffi::OsString;
@@ -15,9 +16,18 @@ pub fn clean(verbose: bool) -> Result<i32> {
     let root = current_project_root()?;
     let removed = clean_build_artifacts(&root)?;
     if removed == 0 {
-        println!("No BornEngine build artifacts were recorded.");
+        println!(
+            "{}",
+            ui::paint("No BornEngine build artifacts were recorded.", Tone::Info)
+        );
     } else {
-        println!("Removed {removed} BornEngine build artifact(s).");
+        println!(
+            "{}",
+            ui::paint(
+                format!("Removed {removed} BornEngine build artifact(s)."),
+                Tone::Success
+            )
+        );
     }
     if verbose {
         println!("Project: {}", root.display());
@@ -26,7 +36,7 @@ pub fn clean(verbose: bool) -> Result<i32> {
 }
 
 pub fn doctor(verbose: bool) -> Result<i32> {
-    println!("BornEngine Doctor\n");
+    println!("{}\n", ui::paint("BornEngine Doctor", Tone::Heading));
     let mut healthy = true;
     let perry_version = check_version("Perry", "perry", "--version", &mut healthy);
     check_version("Rust", "rustc", "--version", &mut healthy);
@@ -40,9 +50,13 @@ pub fn doctor(verbose: bool) -> Result<i32> {
         None => PackageManager::parse(&config.package_manager)?,
     };
     if executable_in_path(manager.executable()) {
-        println!("[OK] {}", manager.as_str());
+        println!("{} {}", ui::paint("[OK]", Tone::Success), manager.as_str());
     } else {
-        println!("[FAIL] {} was not found in PATH", manager.as_str());
+        println!(
+            "{} {} was not found in PATH",
+            ui::paint("[FAIL]", Tone::Error),
+            manager.as_str()
+        );
         println!(
             "      Install Node.js and run `npm install --global {}`.",
             manager.as_str()
@@ -58,16 +72,23 @@ pub fn doctor(verbose: bool) -> Result<i32> {
                 HostPlatform::current(),
             ) {
                 Ok(target) => println!(
-                    "[OK] {} target",
+                    "{} {} target",
+                    ui::paint("[OK]", Tone::Success),
                     target.perry_target.as_deref().unwrap_or("native")
                 ),
                 Err(error) => {
-                    println!("[FAIL] Perry cannot build for this host: {error}");
+                    println!(
+                        "{} Perry cannot build for this host: {error}",
+                        ui::paint("[FAIL]", Tone::Error)
+                    );
                     healthy = false;
                 }
             },
             Err(error) => {
-                println!("[FAIL] Could not inspect Perry targets: {error}");
+                println!(
+                    "{} Could not inspect Perry targets: {error}",
+                    ui::paint("[FAIL]", Tone::Error)
+                );
                 healthy = false;
             }
         }
@@ -85,13 +106,20 @@ pub fn doctor(verbose: bool) -> Result<i32> {
             println!("Project: {}", root.display());
             let package = read_package_json(&root)?;
             if let Some(name) = project_name(&root)? {
-                println!("[OK] Project metadata: {name}");
+                println!(
+                    "{} Project metadata: {name}",
+                    ui::paint("[OK]", Tone::Success)
+                );
             } else {
-                println!("[WARN] package.json does not define a project name");
+                println!(
+                    "{} package.json does not define a project name",
+                    ui::paint("[WARN]", Tone::Warning)
+                );
             }
             if let Some(dependency) = engine_dependency(&package)? {
                 println!(
-                    "[OK] Engine dependency: {} {} ({})",
+                    "{} Engine dependency: {} {} ({})",
+                    ui::paint("[OK]", Tone::Success),
                     dependency.package_name,
                     dependency.spec,
                     dependency_source(&dependency.spec)
@@ -102,10 +130,14 @@ pub fn doctor(verbose: bool) -> Result<i32> {
                     .join("package.json")
                     .is_file();
                 if installed {
-                    println!("[OK] BornEngine package is installed");
+                    println!(
+                        "{} BornEngine package is installed",
+                        ui::paint("[OK]", Tone::Success)
+                    );
                 } else {
                     println!(
-                        "[FAIL] BornEngine package is missing from node_modules; run `{}`",
+                        "{} BornEngine package is missing from node_modules; run `{}`",
+                        ui::paint("[FAIL]", Tone::Error),
                         manager.install_args().join(" ")
                     );
                     healthy = false;
@@ -120,29 +152,47 @@ pub fn doctor(verbose: bool) -> Result<i32> {
                             .any(|entry| entry.as_str() == Some(&required_pattern))
                     });
                 if allowed {
-                    println!("[OK] Perry native-library allowlist");
+                    println!(
+                        "{} Perry native-library allowlist",
+                        ui::paint("[OK]", Tone::Success)
+                    );
                 } else {
-                    println!("[FAIL] Perry allowlist is missing `{required_pattern}`");
+                    println!(
+                        "{} Perry allowlist is missing `{required_pattern}`",
+                        ui::paint("[FAIL]", Tone::Error)
+                    );
                     healthy = false;
                 }
             } else {
-                println!("[FAIL] No BornEngine dependency is declared in package.json");
+                println!(
+                    "{} No BornEngine dependency is declared in package.json",
+                    ui::paint("[FAIL]", Tone::Error)
+                );
                 healthy = false;
             }
             if root.join("main.ts").is_file() {
-                println!("[OK] Entry point: main.ts");
+                println!("{} Entry point: main.ts", ui::paint("[OK]", Tone::Success));
             } else {
-                println!("[WARN] No main.ts entry point was found at the project root");
+                println!(
+                    "{} No main.ts entry point was found at the project root",
+                    ui::paint("[WARN]", Tone::Warning)
+                );
             }
         }
-        None => println!("[INFO] Not inside a BornEngine project; project checks skipped."),
+        None => println!(
+            "{} Not inside a BornEngine project; project checks skipped.",
+            ui::paint("[INFO]", Tone::Info)
+        ),
     }
 
     if healthy {
-        println!("\nEnvironment looks ready.");
+        println!("\n{}", ui::paint("Environment looks ready.", Tone::Success));
         Ok(0)
     } else {
-        println!("\nSome checks need attention.");
+        println!(
+            "\n{}",
+            ui::paint("Some checks need attention.", Tone::Warning)
+        );
         Ok(1)
     }
 }
@@ -199,11 +249,14 @@ fn current_project_root() -> Result<PathBuf> {
 fn check_version(label: &str, executable: &str, flag: &str, healthy: &mut bool) -> Option<String> {
     match command_text(executable, &[flag]) {
         Some(version) => {
-            println!("[OK] {label}: {version}");
+            println!("{} {label}: {version}", ui::paint("[OK]", Tone::Success));
             Some(version)
         }
         None => {
-            println!("[FAIL] {label} was not found or could not be started");
+            println!(
+                "{} {label} was not found or could not be started",
+                ui::paint("[FAIL]", Tone::Error)
+            );
             *healthy = false;
             None
         }
@@ -247,7 +300,8 @@ fn compile_capabilities(verbose: bool) -> Result<PerryCapabilities> {
 fn check_linux_prerequisites() -> bool {
     if !executable_in_path("pkg-config") {
         println!(
-            "[FAIL] pkg-config is missing; install pkg-config and the X11/XI/ALSA development packages"
+            "{} pkg-config is missing; install pkg-config and the X11/XI/ALSA development packages",
+            ui::paint("[FAIL]", Tone::Error)
         );
         return false;
     }
@@ -257,9 +311,15 @@ fn check_linux_prerequisites() -> bool {
         let available = captured_command("pkg-config", &args, None, false)
             .is_ok_and(|output| output.status.success());
         if available {
-            println!("[OK] Linux development library: {package}");
+            println!(
+                "{} Linux development library: {package}",
+                ui::paint("[OK]", Tone::Success)
+            );
         } else {
-            println!("[FAIL] Linux development library `{package}` is missing");
+            println!(
+                "{} Linux development library `{package}` is missing",
+                ui::paint("[FAIL]", Tone::Error)
+            );
             healthy = false;
         }
     }

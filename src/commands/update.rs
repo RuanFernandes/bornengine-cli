@@ -1,3 +1,4 @@
+use crate::ui::{self, Tone};
 use anyhow::Result;
 use serde_json::Value;
 use std::time::Duration;
@@ -9,7 +10,7 @@ const INSTALL_COMMAND: &str =
 
 pub fn check() -> Result<i32> {
     let current = env!("CARGO_PKG_VERSION");
-    println!("BornEngine CLI: {current}");
+    println!("BornEngine CLI: {}", ui::paint(current, Tone::Accent));
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .build()
@@ -32,26 +33,43 @@ pub fn check() -> Result<i32> {
                         let current_version = semver::Version::parse(current)?;
                         if latest > current_version {
                             println!(
-                                "Version {latest} is available. Update with:\n  {INSTALL_COMMAND}"
+                                "{} Update with:\n  {INSTALL_COMMAND}",
+                                ui::paint(format!("Version {latest} is available."), Tone::Info)
                             );
                         } else {
-                            println!("You are using the latest published CLI release.");
+                            println!(
+                                "{}",
+                                ui::paint(
+                                    "You are using the latest published CLI release.",
+                                    Tone::Success
+                                )
+                            );
                         }
                     }
                     Err(_) => println!(
-                        "The latest GitHub release has an invalid version tag; install with:\n  {INSTALL_COMMAND}"
+                        "{} install with:\n  {INSTALL_COMMAND}",
+                        ui::paint(
+                            "The latest GitHub release has an invalid version tag;",
+                            Tone::Warning
+                        )
                     ),
                 },
                 None => println!(
-                    "Could not read the latest release tag; install with:\n  {INSTALL_COMMAND}"
+                    "{} install with:\n  {INSTALL_COMMAND}",
+                    ui::paint("Could not read the latest release tag;", Tone::Warning)
                 ),
             }
         }
         Err(ureq::Error::StatusCode(404)) => println!(
-            "No CLI release is published yet. When one is available, update with:\n  {INSTALL_COMMAND}"
+            "{} When one is available, update with:\n  {INSTALL_COMMAND}",
+            ui::paint("No CLI release is published yet.", Tone::Info)
         ),
         Err(error) => println!(
-            "Could not check GitHub releases ({error}). Update manually with:\n  {INSTALL_COMMAND}"
+            "{} Update manually with:\n  {INSTALL_COMMAND}",
+            ui::paint(
+                format!("Could not check GitHub releases ({error})."),
+                Tone::Warning
+            )
         ),
     }
     Ok(0)

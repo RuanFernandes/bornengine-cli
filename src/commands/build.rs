@@ -6,10 +6,11 @@ use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
 };
 use crate::process::{
-    captured_command, ensure_success, inherited_command, perry_check_args, perry_compile_args,
-    perry_dev_args,
+    captured_command, display_command, ensure_success, inherited_command, perry_check_args,
+    perry_compile_args, perry_dev_args,
 };
 use crate::project::{find_project_root, read_package_json};
+use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -77,12 +78,16 @@ pub fn build(
     if verbose {
         print_output(&output);
     }
+    println!("{}", ui::paint("BornEngine", Tone::Heading));
     println!(
-        "BornEngine\nTarget: {target_label}\nEntry: {}\nOutput: {}",
+        "Target: {target_label}\nEntry: {}\nOutput: {}",
         entry_file.display(),
         artifact.output.display()
     );
-    println!("Build completed successfully.");
+    println!(
+        "{}",
+        ui::paint("Build completed successfully.", Tone::Success)
+    );
     Ok(0)
 }
 
@@ -116,6 +121,7 @@ pub fn run(
     if verbose {
         print_output(&output);
     }
+    println!("{}", ui::paint("Launching game...", Tone::Info));
     let args = program_args.iter().map(OsString::from).collect::<Vec<_>>();
     inherited_command(
         artifact.output.to_string_lossy().as_ref(),
@@ -177,7 +183,10 @@ pub fn check(
         print_output(&output);
     }
     ensure_success("perry check", &output)?;
-    println!("Perry check completed successfully.");
+    println!(
+        "{}",
+        ui::paint("Perry check completed successfully.", Tone::Success)
+    );
     Ok(0)
 }
 
@@ -247,12 +256,19 @@ fn run_perry_compile(
     output_path: &Path,
     verbose: bool,
 ) -> Result<std::process::Output> {
-    println!("Compiling...");
     let args = perry_compile_args(&context.entry, output_path, &context.target, verbose);
     let working_directory = output_path
         .parent()
         .context("build output path has no parent directory")?;
-    captured_command("perry", &args, Some(working_directory), verbose)
+    if verbose {
+        eprintln!(
+            "{}",
+            ui::paint_stderr(display_command("perry", &args), Tone::Accent)
+        );
+    }
+    ui::run_with_spinner("Compiling", || {
+        captured_command("perry", &args, Some(working_directory), false)
+    })
 }
 
 fn print_output(output: &std::process::Output) {

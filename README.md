@@ -2,6 +2,8 @@
 
 `bornengine` creates, builds, runs, and manages BornEngine game projects. It is a small Rust frontend to Perry: Perry compiles TypeScript, while each game records its own engine dependency and lockfile.
 
+> **Lineage:** This is a standalone companion CLI for [BornEngine](https://github.com/RuanFernandes/BornEngine), an independently maintained fork of the original [Bloom Engine](https://github.com/Bloom-Engine/engine). Bloom Engine remains the upstream project; this CLI is not an official Bloom Engine tool and is not affiliated with or endorsed by its maintainers.
+
 ## Install
 
 Install the CLI from this repository:
@@ -15,17 +17,18 @@ The CLI itself does not require Node.js. Game projects need Perry and a package 
 ## Quick start
 
 ```sh
-bornengine new MyGame
+bornengine create # Enter MyGame when prompted
 cd MyGame
 bornengine run main.ts
 ```
 
-`new` creates a starter game, writes Perry's native-library allowlist, installs the selected engine package, and creates the package manager lockfile. Normal projects do not require a separate BornEngine clone.
+`create` interactively asks for a project name, package manager, and stable engine version from npm. It uses your configured package manager and engine version as the initial selections. For scripts and non-interactive use, `new` creates a starter game, writes Perry's native-library allowlist, installs the selected engine package, and creates the package manager lockfile. Normal projects do not require a separate BornEngine clone.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
+| `bornengine create` | Interactively select a project name, package manager, and stable engine version from npm. |
 | `bornengine new <name>` | Create a project and install its dependencies. |
 | `bornengine init` | Add a new project scaffold to an otherwise empty directory. It refuses to overwrite generated files. |
 | `bornengine build <entry>` | Compile for the host or a requested target. |
@@ -60,7 +63,7 @@ Scaffolding never deletes or overwrites existing files. `new` refuses a populate
 
 ## Engine dependency and local development
 
-Each game pins an exact stable engine version in `package.json`; its lockfile records the resolved graph. The CLI checks for the preferred `@bornengine/engine` package and, while that namespace has no published stable package, falls back to the currently published `@bloomengine/engine`. The old scope remains supported for existing games. The CLI does not install a machine-global engine.
+Each game pins an exact stable engine version in `package.json`; its lockfile records the resolved graph. New projects and engine installs prefer the published `@bornengine/engine` package. The CLI still recognizes `@bloomengine/engine` for existing Bloom-based projects and uses it as a fallback when a requested version is unavailable under the BornEngine scope. The CLI does not install a machine-global engine.
 
 For engine development, point a game at a local checkout:
 

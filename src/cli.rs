@@ -18,6 +18,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    /// Create a BornEngine game project with interactive prompts.
+    Create,
     /// Create a new BornEngine game project.
     New {
         #[arg(help = "Name of the new project directory")]

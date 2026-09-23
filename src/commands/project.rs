@@ -3,6 +3,7 @@ use crate::engine::{local_engine_dependency, resolve_engine_release};
 use crate::package_manager::PackageManager;
 use crate::process::{executable_in_path, inherited_command};
 use crate::project::{ProjectSpec, create_project, initialize_project, validate_project_name};
+use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,13 @@ pub fn new(
         &config,
     )?;
 
-    println!("Creating BornEngine project: {project_name}");
+    println!(
+        "{}",
+        ui::paint(
+            format!("Creating BornEngine project: {project_name}"),
+            Tone::Heading
+        )
+    );
     let project_root = create_project(&parent, project_name, &spec)?;
     install_dependencies(manager, &project_root, verbose)
 }
@@ -62,7 +69,13 @@ pub fn init(
         &config,
     )?;
 
-    println!("Initializing BornEngine project in {}", root.display());
+    println!(
+        "{}",
+        ui::paint(
+            format!("Initializing BornEngine project in {}", root.display()),
+            Tone::Heading
+        )
+    );
     initialize_project(&root, project_name, &spec)?;
     install_dependencies(manager, &root, verbose)
 }
@@ -120,7 +133,13 @@ pub fn install_dependencies(
     project_root: &Path,
     verbose: bool,
 ) -> Result<i32> {
-    println!("Installing dependencies with {}...", manager.as_str());
+    println!(
+        "{}",
+        ui::paint(
+            format!("Installing dependencies with {}...", manager.as_str()),
+            Tone::Info
+        )
+    );
     let args = manager
         .install_args()
         .iter()
@@ -129,12 +148,14 @@ pub fn install_dependencies(
     let exit_code = inherited_command(manager.executable(), &args, Some(project_root), verbose)?;
     if exit_code == 0 {
         println!(
-            "Project created successfully.\n\n  cd {}\n  bornengine run main.ts",
+            "{}\n\n  cd {}\n  bornengine run main.ts",
+            ui::paint("Project created successfully.", Tone::Success),
             display_path(project_root)
         );
     } else {
         eprintln!(
-            "Project files are in {}; dependency installation failed. Retry with `{} install`.",
+            "{} Project files are in {}; dependency installation failed. Retry with `{} install`.",
+            ui::paint_stderr("Warning:", Tone::Warning),
             project_root.display(),
             manager.as_str()
         );

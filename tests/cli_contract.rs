@@ -88,6 +88,13 @@ fn new_accepts_short_package_manager_and_engine_aliases() {
 }
 
 #[test]
+fn create_is_available_as_a_separate_interactive_command() {
+    let cli = Cli::try_parse_from(["bornengine", "create"]).unwrap();
+
+    assert!(matches!(cli.command, Commands::Create));
+}
+
+#[test]
 fn verbose_flag_is_available_after_a_subcommand() {
     let cli = Cli::try_parse_from(["bornengine", "doctor", "--verbose"]).unwrap();
     assert_eq!(cli.verbose, 1);

@@ -1,5 +1,6 @@
 pub mod build;
 pub mod config;
+pub mod create;
 pub mod diagnostics;
 pub mod engine;
 pub mod project;
@@ -11,6 +12,7 @@ use anyhow::Result;
 pub fn execute(cli: Cli) -> Result<i32> {
     let verbose = cli.verbose > 0;
     match cli.command {
+        Commands::Create => create::create(verbose),
         Commands::New {
             project_name,
             package_manager,
