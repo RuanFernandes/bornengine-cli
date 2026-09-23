@@ -49,6 +49,41 @@ pub fn perry_dev_args(entry: &Path, output: &Path, verbose: bool) -> Vec<OsStrin
     args
 }
 
+#[cfg(any(all(windows, target_arch = "x86_64"), test))]
+fn resolve_child_linkers(
+    perry_linker: Option<OsString>,
+    cargo_linker: Option<OsString>,
+    lld_available: bool,
+) -> (Option<OsString>, Option<OsString>) {
+    let selected = perry_linker
+        .as_ref()
+        .or(cargo_linker.as_ref())
+        .cloned()
+        .or_else(|| lld_available.then(|| OsString::from("lld-link.exe")));
+    (
+        perry_linker.or_else(|| selected.clone()),
+        cargo_linker.or(selected),
+    )
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+fn configure_child_linkers(command: &mut Command) {
+    let (perry_linker, cargo_linker) = resolve_child_linkers(
+        std::env::var_os("PERRY_LLD_LINK"),
+        std::env::var_os("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"),
+        executable_in_path("lld-link.exe"),
+    );
+    if let Some(linker) = perry_linker {
+        command.env("PERRY_LLD_LINK", linker);
+    }
+    if let Some(linker) = cargo_linker {
+        command.env("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER", linker);
+    }
+}
+
+#[cfg(not(all(windows, target_arch = "x86_64")))]
+fn configure_child_linkers(_: &mut Command) {}
+
 pub fn captured_command(
     program: &str,
     args: &[OsString],
@@ -56,6 +91,7 @@ pub fn captured_command(
     verbose: bool,
 ) -> Result<Output> {
     let mut command = Command::new(program_for_spawn(program));
+    configure_child_linkers(&mut command);
     command
         .args(args)
         .stdout(Stdio::piped())
@@ -78,6 +114,7 @@ pub fn inherited_command(
     verbose: bool,
 ) -> Result<i32> {
     let mut command = Command::new(program_for_spawn(program));
+    configure_child_linkers(&mut command);
     command.args(args);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
@@ -226,7 +263,7 @@ fn path_extensions() -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_command_program;
+    use super::{resolve_child_linkers, resolve_command_program};
     use std::env;
     use std::ffi::{OsStr, OsString};
     use std::fs;
@@ -234,6 +271,37 @@ mod tests {
 
     fn path_value(directory: &Path) -> OsString {
         env::join_paths([directory]).unwrap()
+    }
+
+    #[test]
+    fn selects_lld_for_both_children_when_available() {
+        let lld = Some(OsString::from("lld-link.exe"));
+        assert_eq!(resolve_child_linkers(None, None, true), (lld.clone(), lld));
+    }
+
+    #[test]
+    fn propagates_a_single_explicit_linker_to_both_children() {
+        let linker = Some(OsString::from("custom-link.exe"));
+        assert_eq!(
+            resolve_child_linkers(linker.clone(), None, false),
+            (linker.clone(), linker)
+        );
+        let linker = Some(OsString::from("cargo-link.exe"));
+        assert_eq!(
+            resolve_child_linkers(None, linker.clone(), false),
+            (linker.clone(), linker)
+        );
+    }
+
+    #[test]
+    fn preserves_explicit_linkers_and_does_not_guess_without_lld() {
+        let perry = Some(OsString::from("perry-link.exe"));
+        let cargo = Some(OsString::from("cargo-link.exe"));
+        assert_eq!(
+            resolve_child_linkers(perry.clone(), cargo.clone(), true),
+            (perry, cargo)
+        );
+        assert_eq!(resolve_child_linkers(None, None, false), (None, None));
     }
 
     #[test]
