@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -34,7 +40,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - name: Install stable Rust and target
+        shell: bash
         env:
           RUST_TARGET: ${{ matrix.target }}
         run: |
@@ -42,6 +51,7 @@ jobs:
           rustup default stable
           rustup target add "$RUST_TARGET"
       - name: Build release executable
+        shell: bash
         env:
           RUST_TARGET: ${{ matrix.target }}
         run: cargo build --locked --release --target "$RUST_TARGET"
@@ -76,4 +86,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/* --verify-tag --generate-notes
