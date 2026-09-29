@@ -1,6 +1,4 @@
-use crate::engine_package::{
-    ENGINE_PACKAGES, engine_subpath, is_engine_package, native_library_allow_pattern,
-};
+use crate::engine_package::{ENGINE_PACKAGES, is_engine_package, native_library_allow_pattern};
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
 use std::fs::{self, OpenOptions};
@@ -140,21 +138,36 @@ fn generated_files(
         }),
     );
     let package_json = serde_json::to_string_pretty(&Value::Object(package))? + "\n";
-    let core = engine_subpath(&spec.engine_package, "core");
-    let shapes = engine_subpath(&spec.engine_package, "shapes");
     let main_ts = format!(
-        r#"import {{ initWindow, runGame, clearBackground, setTargetFPS, setDirect2DMode }} from "{core}";
-import {{ drawRect }} from "{shapes}";
+        r#"import {{ Game }} from "{engine_package}";
 
-initWindow(800, 450, "BornEngine Game");
-setTargetFPS(60);
-setDirect2DMode(true);
+class StarterGame extends Game {{
+  private elapsed = 0;
 
-runGame(() => {{
-  clearBackground({{ r: 22, g: 26, b: 36, a: 255 }});
-  drawRect(300, 160, 200, 130, {{ r: 72, g: 156, b: 220, a: 255 }});
-}});
-"#
+  constructor() {{
+    super({{ window: {{ width: 800, height: 450, title: "BornEngine Game" }}, targetFps: 60 }});
+  }}
+
+  protected override onStart(): void {{
+    this.elapsed = 0;
+  }}
+
+  protected override loop(deltaTime: number): void {{
+    this.elapsed += deltaTime;
+  }}
+
+  protected override render(): void {{
+    this.renderer.clear({{ r: 22, g: 26, b: 36, a: 255 }});
+    this.renderer.drawRectangle(
+      {{ x: 300, y: 160, width: 200, height: 130 }},
+      {{ r: 72, g: 156, b: 220, a: 255 }},
+    );
+  }}
+}}
+
+new StarterGame().run();
+"#,
+        engine_package = spec.engine_package
     );
     let gitignore = "node_modules/\n.perry-cache/\n.perry-dev/\n.bornengine/\ntarget/\ndist/\n";
     let readme = format!(

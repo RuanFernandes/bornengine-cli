@@ -103,6 +103,46 @@ Isometric or infinite maps, base64/compressed tile data, image-collection tilese
 
 `assets validate` and `assets pack` inspect the project's `assets/`, `public/`, and `static/` roots plus assets listed by BornEngine world documents. They reject missing references, unsafe paths, case mismatches, and symlinks that escape the project. Packing preserves project-relative paths, copies exact file bytes, sorts manifest entries, and includes each file's SHA-256 digest and size. `build` and `run` place the pack beside the managed executable; `dev --watch` also asks Perry to watch the asset directories so a changed image or data file restarts the game. `clean` removes the packed files only when they are recorded under a CLI-managed build directory.
 
+### Asset audit configuration
+
+Place an optional `bornengine.assets.json` at the project root:
+
+```json
+{
+  "version": 1,
+  "dynamic_paths": ["assets/skins/player.png"],
+  "ignored_paths": ["assets/generated/**"],
+  "orphan_severity": "warning",
+  "max_file_bytes": 10485760,
+  "max_total_bytes": 104857600,
+  "max_image_dimension": 4096,
+  "max_total_image_pixels": 16777216
+}
+```
+
+`version` must be `1`. `dynamic_paths` lists exact existing files loaded through computed runtime paths. Such paths cannot be inferred from TypeScript expressions, so declare them to avoid orphan warnings. A missing declaration target is an error. `ignored_paths` excludes matching files from orphan and size/pixel budget checks, but they remain in the validation inventory and asset pack; media header and extension diagnostics still apply. Paths use forward slashes relative to the project root. Absolute paths, traversal, duplicate entries, and unsupported glob syntax are rejected. In `ignored_paths`, `*` matches within one path component and `**` matches whole components across directories.
+
+`orphan_severity` accepts `ignore`, `warn` (or `warning`), and `error`; the default is `warning`. The four limits are optional positive integers. `max_file_bytes` checks each nonignored file; `max_total_bytes` sums nonignored files. `max_image_dimension` checks either dimension of each nonignored supported image; `max_total_image_pixels` sums their width times height. Command flags `--orphan-policy {ignore,warn,error}`, `--max-file-bytes`, `--max-total-bytes`, `--max-image-dimension`, and `--max-total-image-pixels` override the matching manifest value. Unspecified flags leave manifest values in place. There is no implicit size or dimension limit.
+
+The auditor recognizes PNG, JPEG (`.jpg`/`.jpeg`), GIF, BMP, WebP, WAV, MP3, Ogg, and FLAC signatures. It reads headers and image dimensions without decoding whole media files. Invalid headers and signature/extension mismatches are warnings. Reference analysis uses supported `.world2d.json` declarations and `dynamic_paths`; it cannot prove use of arbitrary TypeScript asset paths. An orphan warning means no known reference was found, not that the file is unused at runtime.
+
+### Validation output and exit status
+
+Human output retains `Validated N project assets (B bytes)` on stdout and prints each diagnostic to stderr with its severity, stable code, project-relative path, and message. `--json` writes one JSON object followed by a newline to stdout, without human summary or diagnostic text. Its schema is:
+
+```json
+{
+  "format": "bornengine.asset_validation",
+  "version": 1,
+  "summary": { "files": 1, "bytes": 6 },
+  "diagnostics": [{ "code": "orphan_asset", "severity": "warning", "path": "assets/example.txt", "message": "asset has no known static or declared dynamic reference", "measured": null, "limit": null }]
+}
+```
+
+Diagnostics are sorted by path, code, severity, message, measured value, and limit. Codes are `orphan_asset`, `invalid_media_header`, `extension_mismatch`, `file_size_limit`, `total_size_limit`, `image_dimension_limit`, `total_image_pixels_limit`, and `declared_dynamic_path_missing`. Aggregate diagnostics use an empty path. Measured and limit values are bytes, pixels, or the maximum image dimension as appropriate; unrelated diagnostics use `null`. A report with warnings only exits `0`; any error diagnostic exits `1` in both output modes. Invalid manifests, unsafe paths, missing world references, and other hard validation failures also exit `1` and print an error to stderr; they cannot produce a completed JSON report.
+
+`assets pack` continues to copy the same deterministic file inventory and write a `bornengine-assets-v1` manifest. Audit warnings do not change the default pack output. Build and run still fail on hard validation errors or configured error diagnostics before packing.
+
 ## Troubleshooting
 
 - **Perry not found:** install Perry and make sure `perry` is on `PATH`, then run `bornengine doctor`.
