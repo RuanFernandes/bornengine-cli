@@ -1,5 +1,6 @@
 use bornengine_cli::commands::import::import_tiled;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 
 #[test]
@@ -214,4 +215,25 @@ fn rejects_object_reference_properties_without_writing_partial_world() {
     assert!(error.contains("target"), "{error}");
     assert!(error.contains("object"), "{error}");
     assert!(!output.exists());
+}
+
+#[test]
+fn canonical_tiled_output_fixture_matches_the_engine_repository_contract() {
+    let fixture = fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/world2d/tiled-golden.world2d.json"),
+    )
+    .unwrap();
+    let sha256 = Sha256::digest(&fixture)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    assert_eq!(
+        sha256,
+        "3bb2570c0ceaf34469ac35ae5e0b86c41a71ad7b4ce9abecc239cc4bd62618c6"
+    );
+    let world: Value = serde_json::from_slice(&fixture).unwrap();
+    assert_eq!(world["format"], "bornengine.world2d");
+    assert_eq!(world["version"], 1);
 }
