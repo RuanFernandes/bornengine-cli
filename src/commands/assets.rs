@@ -4,7 +4,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MANIFEST_NAME: &str = "assets.manifest.json";
 const MANIFEST_FORMAT: &str = "bornengine-assets-v1";
@@ -66,6 +68,19 @@ pub fn validate_project_assets(project_root: &Path) -> Result<AssetSummary> {
 }
 
 pub fn pack_project(project_root: &Path, output_directory: &Path) -> Result<PackSummary> {
+    pack_project_with_rename(project_root, output_directory, |source, destination| {
+        fs::rename(source, destination)
+    })
+}
+
+fn pack_project_with_rename<F>(
+    project_root: &Path,
+    output_directory: &Path,
+    mut rename: F,
+) -> Result<PackSummary>
+where
+    F: FnMut(&Path, &Path) -> io::Result<()>,
+{
     let root = canonical_root(project_root)?;
     let assets = collect_project_assets(&root)?;
     let output = absolute_output_path(output_directory)?;
@@ -77,6 +92,10 @@ pub fn pack_project(project_root: &Path, output_directory: &Path) -> Result<Pack
             );
         }
     }
+    if assets.contains_key(MANIFEST_NAME) {
+        bail!("project asset path `{MANIFEST_NAME}` is reserved for the pack manifest");
+    }
+    reject_symlink_components(&output, "asset output")?;
     let output_parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -84,22 +103,28 @@ pub fn pack_project(project_root: &Path, output_directory: &Path) -> Result<Pack
     fs::create_dir_all(output_parent)
         .with_context(|| format!("could not create output parent {}", output_parent.display()))?;
     reject_symlink_components(&output, "asset output")?;
-    fs::create_dir_all(&output)
-        .with_context(|| format!("could not create asset output {}", output.display()))?;
-    let output = output
-        .canonicalize()
-        .with_context(|| format!("could not resolve asset output {}", output.display()))?;
-    let old_manifest = read_existing_manifest(&output)?;
+    let output_exists = validate_pack_output_directory(&output)?;
+    let old_manifest = if output_exists {
+        read_existing_manifest(&output)?
+    } else {
+        None
+    };
+    let old_paths = manifest_paths(old_manifest.as_ref())?;
     let new_paths = assets.keys().cloned().collect::<BTreeSet<_>>();
-    if let Some(manifest) = old_manifest {
-        clean_stale_managed_files(&output, manifest, &new_paths)?;
-    }
+    preflight_pack_output(&output, &old_paths, &new_paths)?;
+
+    let stage = PackStage::create(output_parent)?;
+    let staged_files = stage.0.join("next");
+    fs::create_dir(&staged_files).with_context(|| {
+        format!(
+            "could not create staging directory {}",
+            staged_files.display()
+        )
+    })?;
 
     let mut entries = Vec::with_capacity(assets.len());
     let mut summary = PackSummary::default();
     for (relative, source) in assets {
-        let destination = output.join(Path::new(&relative));
-        create_safe_parent_directories(&output, destination.parent().unwrap_or(&output))?;
         let bytes =
             fs::read(&source).with_context(|| format!("could not read asset `{relative}`"))?;
         let digest = Sha256::digest(&bytes);
@@ -107,7 +132,14 @@ pub fn pack_project(project_root: &Path, output_directory: &Path) -> Result<Pack
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        atomic_copy(&destination, &bytes)?;
+        let destination = staged_files.join(Path::new(&relative));
+        let parent = destination
+            .parent()
+            .context("staged asset path has no parent directory")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create staging directory {}", parent.display()))?;
+        fs::write(&destination, &bytes)
+            .with_context(|| format!("could not stage asset `{relative}`"))?;
         summary.files += 1;
         summary.bytes = summary.bytes.saturating_add(bytes.len() as u64);
         entries.push(AssetEntry {
@@ -122,9 +154,267 @@ pub fn pack_project(project_root: &Path, output_directory: &Path) -> Result<Pack
     };
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
     manifest_bytes.push(b'\n');
-    atomic_copy(&output.join(MANIFEST_NAME), &manifest_bytes)
-        .context("could not write asset manifest")?;
+    fs::write(staged_files.join(MANIFEST_NAME), &manifest_bytes)
+        .context("could not stage asset manifest")?;
+
+    publish_staged_pack(
+        &output,
+        &stage.0,
+        &staged_files,
+        &old_paths,
+        &new_paths,
+        output_exists,
+        &mut rename,
+    )?;
     Ok(summary)
+}
+
+struct PackStage(PathBuf);
+
+impl PackStage {
+    fn create(parent: &Path) -> Result<Self> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        for attempt in 0_u32..u32::MAX {
+            let candidate = parent.join(format!(
+                ".bornengine-assets-{}-{timestamp}-{attempt}",
+                std::process::id()
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => return Ok(Self(candidate)),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "could not create pack staging directory {}",
+                            candidate.display()
+                        )
+                    });
+                }
+            }
+        }
+        bail!("could not allocate a unique asset pack staging directory")
+    }
+}
+
+impl Drop for PackStage {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn validate_pack_output_directory(output: &Path) -> Result<bool> {
+    match fs::symlink_metadata(output) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!(
+                "refusing to use symbolic link as asset output: {}",
+                output.display()
+            );
+        }
+        Ok(metadata) if metadata.is_dir() => Ok(true),
+        Ok(_) => bail!(
+            "asset output exists and is not a directory: {}",
+            output.display()
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("could not inspect {}", output.display())),
+    }
+}
+
+fn manifest_paths(manifest: Option<&AssetManifest>) -> Result<BTreeSet<String>> {
+    let mut paths = BTreeSet::new();
+    if let Some(manifest) = manifest {
+        for entry in &manifest.files {
+            let path = normalize_pack_path(&entry.path)?;
+            if path == MANIFEST_NAME {
+                bail!("asset manifest must not list itself as a packed file");
+            }
+            if !paths.insert(path.clone()) {
+                bail!("asset manifest contains duplicate path `{path}`");
+            }
+        }
+    }
+    Ok(paths)
+}
+
+fn preflight_pack_output(
+    output: &Path,
+    old_paths: &BTreeSet<String>,
+    new_paths: &BTreeSet<String>,
+) -> Result<()> {
+    for relative in old_paths.union(new_paths) {
+        let path = output.join(relative);
+        reject_output_parent_symlinks(output, &path)?;
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                bail!("refusing to replace symbolic link packed asset `{relative}`");
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                bail!("packed asset path `{relative}` is not a regular file");
+            }
+            Ok(_) if new_paths.contains(relative) && !old_paths.contains(relative) => {
+                bail!("refusing to replace untracked output file `{relative}`");
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("could not inspect packed asset `{relative}`"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn publish_staged_pack<F>(
+    output: &Path,
+    stage_root: &Path,
+    staged_files: &Path,
+    old_paths: &BTreeSet<String>,
+    new_paths: &BTreeSet<String>,
+    output_exists: bool,
+    rename: &mut F,
+) -> Result<()>
+where
+    F: FnMut(&Path, &Path) -> io::Result<()>,
+{
+    let mut output_created = false;
+    if !output_exists {
+        fs::create_dir(output)
+            .with_context(|| format!("could not create asset output {}", output.display()))?;
+        output_created = true;
+    }
+
+    let mut backup_paths = old_paths.clone();
+    backup_paths.insert(MANIFEST_NAME.to_owned());
+    let mut moved_to_backup = Vec::<(PathBuf, PathBuf)>::new();
+    let mut published = Vec::<PathBuf>::new();
+    let mut created_directories = Vec::<PathBuf>::new();
+
+    let publish_result = (|| -> Result<()> {
+        for relative in &backup_paths {
+            let destination = output.join(relative);
+            match fs::symlink_metadata(&destination) {
+                Ok(_) => {
+                    let backup = stage_root.join("previous").join(relative);
+                    let backup_parent = backup
+                        .parent()
+                        .context("asset backup path has no parent directory")?;
+                    fs::create_dir_all(backup_parent).with_context(|| {
+                        format!(
+                            "could not create backup directory {}",
+                            backup_parent.display()
+                        )
+                    })?;
+                    rename(&destination, &backup).with_context(|| {
+                        format!("could not back up existing asset {}", destination.display())
+                    })?;
+                    moved_to_backup.push((backup, destination));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("could not inspect existing asset {}", destination.display())
+                    });
+                }
+            }
+        }
+
+        for relative in new_paths {
+            let source = staged_files.join(relative);
+            let destination = output.join(relative);
+            create_safe_parent_directories(
+                output,
+                destination.parent().unwrap_or(output),
+                &mut created_directories,
+            )?;
+            rename(&source, &destination)
+                .with_context(|| format!("could not publish packed asset `{relative}`"))?;
+            published.push(destination);
+        }
+
+        let source_manifest = staged_files.join(MANIFEST_NAME);
+        let destination_manifest = output.join(MANIFEST_NAME);
+        rename(&source_manifest, &destination_manifest)
+            .context("could not publish asset manifest")?;
+        published.push(destination_manifest);
+        Ok(())
+    })();
+
+    if let Err(error) = publish_result {
+        let rollback_errors = rollback_pack(
+            output,
+            &moved_to_backup,
+            &published,
+            &created_directories,
+            output_created,
+            rename,
+        );
+        if rollback_errors.is_empty() {
+            return Err(error).context("asset pack failed; the previous output was restored");
+        }
+        bail!(
+            "asset pack failed: {error:#}; rollback also failed: {}",
+            rollback_errors.join("; ")
+        );
+    }
+    Ok(())
+}
+
+fn rollback_pack<F>(
+    output: &Path,
+    moved_to_backup: &[(PathBuf, PathBuf)],
+    published: &[PathBuf],
+    created_directories: &[PathBuf],
+    output_created: bool,
+    rename: &mut F,
+) -> Vec<String>
+where
+    F: FnMut(&Path, &Path) -> io::Result<()>,
+{
+    let mut errors = Vec::new();
+    for path in published.iter().rev() {
+        if let Err(error) = fs::remove_file(path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                errors.push(format!("could not remove {}: {error}", path.display()));
+            }
+        }
+    }
+    for (backup, destination) in moved_to_backup.iter().rev() {
+        if let Some(parent) = destination.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
+            errors.push(format!(
+                "could not restore {}: {error}",
+                destination.display()
+            ));
+            continue;
+        }
+        if let Err(error) = rename(backup, destination) {
+            errors.push(format!(
+                "could not restore {}: {error}",
+                destination.display()
+            ));
+        }
+    }
+    for directory in created_directories.iter().rev() {
+        if let Err(error) = fs::remove_dir(directory)
+            && error.kind() != io::ErrorKind::NotFound
+            && error.kind() != io::ErrorKind::DirectoryNotEmpty
+        {
+            errors.push(format!("could not remove {}: {error}", directory.display()));
+        }
+    }
+    if output_created
+        && let Err(error) = fs::remove_dir(output)
+        && error.kind() != io::ErrorKind::NotFound
+        && error.kind() != io::ErrorKind::DirectoryNotEmpty
+    {
+        errors.push(format!("could not remove {}: {error}", output.display()));
+    }
+    errors
 }
 
 fn read_existing_manifest(output: &Path) -> Result<Option<AssetManifest>> {
@@ -149,40 +439,6 @@ fn read_existing_manifest(output: &Path) -> Result<Option<AssetManifest>> {
             Ok(Some(manifest))
         }
     }
-}
-
-fn clean_stale_managed_files(
-    output: &Path,
-    manifest: AssetManifest,
-    new_paths: &BTreeSet<String>,
-) -> Result<()> {
-    let mut previous = BTreeSet::new();
-    for entry in manifest.files {
-        let path = normalize_pack_path(&entry.path)?;
-        if path == MANIFEST_NAME {
-            bail!("asset manifest must not list itself as a packed file");
-        }
-        if !previous.insert(path.clone()) {
-            bail!("asset manifest contains duplicate path `{path}`");
-        }
-    }
-    for relative in previous.difference(new_paths) {
-        let path = output.join(relative);
-        reject_output_parent_symlinks(output, &path)?;
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.is_file() || metadata.file_type().is_symlink() => {
-                fs::remove_file(&path)
-                    .with_context(|| format!("could not remove stale packed asset `{relative}`"))?;
-            }
-            Ok(_) => bail!("refusing to remove non-file packed asset `{relative}`"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("could not inspect stale packed asset `{relative}`"));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn normalize_pack_path(value: &str) -> Result<String> {
@@ -242,14 +498,18 @@ fn collect_project_assets(root: &Path) -> Result<BTreeMap<String, PathBuf>> {
     let mut spelling_by_normalized = BTreeMap::new();
     for directory in ASSET_ROOTS {
         let path = root.join(directory);
-        if fs::symlink_metadata(&path).is_ok() {
-            collect_asset_tree(
+        match fs::symlink_metadata(&path) {
+            Ok(_) => collect_asset_tree(
                 root,
                 &path,
                 &mut files,
                 &mut spelling_by_normalized,
                 &mut BTreeSet::new(),
-            )?;
+            )?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| format!("could not inspect {}", path.display()));
+            }
         }
     }
     collect_world_documents(root, root, &mut files, &mut spelling_by_normalized)?;
@@ -468,58 +728,89 @@ fn normalize_reference(raw: &str, world_file: &Path) -> Result<String> {
 }
 
 fn resolve_project_reference(root: &Path, relative: &str, world_file: &Path) -> Result<PathBuf> {
-    let path = root.join(relative);
-    match path.canonicalize() {
-        Ok(canonical) => {
-            ensure_inside_root(
-                root,
-                &canonical,
-                &format!("asset `{relative}` in {}", world_file.display()),
-            )?;
-            if !canonical.is_file() {
+    let path = resolve_exact_disk_case(root, relative, world_file)?;
+    let canonical = path.canonicalize().with_context(|| {
+        format!(
+            "{}: could not resolve asset `{relative}`",
+            world_file.display()
+        )
+    })?;
+    ensure_inside_root(
+        root,
+        &canonical,
+        &format!("asset `{relative}` in {}", world_file.display()),
+    )?;
+    if !canonical.is_file() {
+        bail!(
+            "{}: referenced asset `{relative}` is not a file",
+            world_file.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn resolve_exact_disk_case(root: &Path, relative: &str, world_file: &Path) -> Result<PathBuf> {
+    let mut current = root.to_path_buf();
+    let mut actual_parts = Vec::new();
+    let mut case_mismatch = false;
+    for part in relative.split('/') {
+        let entries = match fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 bail!(
-                    "{}: referenced asset `{relative}` is not a file",
+                    "{}: referenced asset `{relative}` does not exist",
                     world_file.display()
                 );
             }
-            Ok(canonical)
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "{}: could not inspect referenced asset `{relative}`",
+                        world_file.display()
+                    )
+                });
+            }
+        };
+        let mut exact = None;
+        let mut case_insensitive = None;
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "{}: could not inspect referenced asset `{relative}`",
+                    world_file.display()
+                )
+            })?;
+            let name = entry.file_name();
+            if name == std::ffi::OsStr::new(part) {
+                exact = Some(name);
+                break;
+            }
+            if case_insensitive.is_none() && name.to_string_lossy().eq_ignore_ascii_case(part) {
+                case_insensitive = Some(name);
+            }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let suggestion = case_mismatch_suggestion(root, relative);
-            if let Some(suggestion) = suggestion {
-                bail!(
-                    "{}: referenced asset `{relative}` does not match disk case; did you mean `{suggestion}`?",
-                    world_file.display()
-                );
-            }
+        let name = if let Some(exact) = exact {
+            exact
+        } else if let Some(case_insensitive) = case_insensitive {
+            case_mismatch = true;
+            case_insensitive
+        } else {
             bail!(
                 "{}: referenced asset `{relative}` does not exist",
                 world_file.display()
             );
-        }
-        Err(error) => Err(error).with_context(|| {
-            format!(
-                "{}: could not resolve asset `{relative}`",
-                world_file.display()
-            )
-        }),
+        };
+        actual_parts.push(name.to_string_lossy().into_owned());
+        current.push(name);
     }
-}
-
-fn case_mismatch_suggestion(root: &Path, relative: &str) -> Option<String> {
-    let mut current = root.to_path_buf();
-    let mut actual = Vec::new();
-    for part in relative.split('/') {
-        let entries = fs::read_dir(&current).ok()?;
-        let matching = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name())
-            .find(|name| name.to_string_lossy().eq_ignore_ascii_case(part))?;
-        actual.push(matching.to_string_lossy().into_owned());
-        current.push(matching);
+    if case_mismatch {
+        bail!(
+            "{}: referenced asset `{relative}` does not match disk case; did you mean `{}`?",
+            world_file.display(),
+            actual_parts.join("/")
+        );
     }
-    let result = actual.join("/");
-    (result != relative).then_some(result)
+    Ok(current)
 }
 
 fn ensure_inside_root(root: &Path, path: &Path, label: &str) -> Result<()> {
@@ -539,11 +830,26 @@ fn is_world_document(path: &Path) -> bool {
 }
 
 fn absolute_output_path(path: &Path) -> Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(std::env::current_dir()?.join(path))
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normalized.file_name().is_some() {
+                    normalized.pop();
+                }
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
     }
+    Ok(normalized)
 }
 
 fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
@@ -569,7 +875,11 @@ fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_safe_parent_directories(root: &Path, parent: &Path) -> Result<()> {
+fn create_safe_parent_directories(
+    root: &Path,
+    parent: &Path,
+    created_directories: &mut Vec<PathBuf>,
+) -> Result<()> {
     if !parent.starts_with(root) {
         bail!("packed asset path escaped output directory");
     }
@@ -591,6 +901,7 @@ fn create_safe_parent_directories(root: &Path, parent: &Path) -> Result<()> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 fs::create_dir(&current)
                     .with_context(|| format!("could not create {}", current.display()))?;
+                created_directories.push(current.clone());
             }
             Err(error) => {
                 return Err(error)
@@ -601,20 +912,55 @@ fn create_safe_parent_directories(root: &Path, parent: &Path) -> Result<()> {
     Ok(())
 }
 
-fn atomic_copy(path: &Path, bytes: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| anyhow!("output path has no parent: {}", path.display()))?;
-    let name = path
-        .file_name()
-        .ok_or_else(|| anyhow!("output path has no file name: {}", path.display()))?
-        .to_string_lossy();
-    let temporary = parent.join(format!(".{name}.tmp-{}", std::process::id()));
-    fs::write(&temporary, bytes)
-        .with_context(|| format!("could not write {}", temporary.display()))?;
-    if let Err(error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error).with_context(|| format!("could not replace {}", path.display()));
+#[cfg(test)]
+mod tests {
+    use super::{pack_project, pack_project_with_rename};
+    use std::fs;
+
+    #[test]
+    fn failed_publish_rolls_back_files_and_manifest() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join("assets")).unwrap();
+        fs::write(project.path().join("assets/a.bin"), b"old-a").unwrap();
+        fs::write(project.path().join("assets/b.bin"), b"old-b").unwrap();
+        let output = tempfile::tempdir().unwrap();
+        pack_project(project.path(), output.path()).unwrap();
+        fs::write(output.path().join("notes.txt"), b"unrelated user file").unwrap();
+        let previous_manifest = fs::read(output.path().join("assets.manifest.json")).unwrap();
+
+        fs::write(project.path().join("assets/a.bin"), b"new-a").unwrap();
+        fs::write(project.path().join("assets/b.bin"), b"new-b").unwrap();
+        let mut rename_attempt = 0;
+        let mut failed_once = false;
+        let error =
+            pack_project_with_rename(project.path(), output.path(), |source, destination| {
+                rename_attempt += 1;
+                if rename_attempt == 5 && !failed_once {
+                    failed_once = true;
+                    return Err(std::io::Error::other("injected publish failure"));
+                }
+                fs::rename(source, destination)
+            })
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("previous output was restored"), "{error}");
+        assert!(failed_once);
+        assert_eq!(
+            fs::read(output.path().join("assets/a.bin")).unwrap(),
+            b"old-a"
+        );
+        assert_eq!(
+            fs::read(output.path().join("assets/b.bin")).unwrap(),
+            b"old-b"
+        );
+        assert_eq!(
+            fs::read(output.path().join("assets.manifest.json")).unwrap(),
+            previous_manifest
+        );
+        assert_eq!(
+            fs::read(output.path().join("notes.txt")).unwrap(),
+            b"unrelated user file"
+        );
     }
-    Ok(())
 }

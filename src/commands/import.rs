@@ -607,14 +607,20 @@ fn parse_tile_layer(layer: Node<'_, '_>, context: TileLayerContext<'_>) -> Resul
     }
     let encoding = data.attribute("encoding").unwrap_or("xml");
     let raw_gids = match encoding {
-        "csv" => data
-            .text()
-            .unwrap_or("")
-            .split(',')
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(|value| parse_u32(value, path, &format!("layer `{name}` CSV gid")))
-            .collect::<Result<Vec<_>>>()?,
+        "csv" => {
+            let mut gids = Vec::new();
+            for (cell_index, value) in data.text().unwrap_or("").split(',').enumerate() {
+                let value = value.trim();
+                if value.is_empty() {
+                    bail!(
+                        "{}: layer `{name}` cell {cell_index} is an empty CSV cell",
+                        path.display()
+                    );
+                }
+                gids.push(parse_u32(value, path, &format!("layer `{name}` CSV gid"))?);
+            }
+            gids
+        }
         "xml" => data
             .children()
             .filter(|node| node.has_tag_name("tile"))

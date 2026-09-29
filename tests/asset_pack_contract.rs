@@ -98,6 +98,117 @@ fn validates_missing_and_case_mismatched_references_with_document_context() {
     assert!(error.contains("does not exist"), "{error}");
 }
 
+#[test]
+fn reference_paths_must_match_disk_case_even_when_the_filesystem_can_fold_case() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets/images")).unwrap();
+    fs::write(project.path().join("assets/images/Player.PNG"), [1]).unwrap();
+    fs::create_dir_all(project.path().join("worlds")).unwrap();
+    fs::write(
+        project.path().join("worlds/level.world2d.json"),
+        r#"{"format":"bornengine.world2d","version":1,"assets":["assets/images/player.png"]}"#,
+    )
+    .unwrap();
+
+    let error = validate_project_assets(project.path())
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("does not match disk case"), "{error}");
+    assert!(error.contains("assets/images/Player.PNG"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_symlink_output_parent_before_creating_any_output() {
+    use std::os::unix::fs::symlink;
+
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/player.png"), [1, 2, 3]).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let link_root = tempfile::tempdir().unwrap();
+    symlink(outside.path(), link_root.path().join("linked")).unwrap();
+
+    let output = link_root.path().join("linked/new/output");
+    let error = pack_project(project.path(), &output)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("symbolic link"), "{error}");
+    assert!(!outside.path().join("new").exists());
+}
+
+#[test]
+fn normalized_output_inside_asset_root_is_rejected_without_writing_into_sources() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/player.png"), [1, 2, 3]).unwrap();
+    fs::create_dir_all(project.path().join("build-alias")).unwrap();
+
+    let output = project.path().join("build-alias/../assets/generated");
+    let error = pack_project(project.path(), &output)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("inside the project asset root"), "{error}");
+    assert!(!project.path().join("assets/generated").exists());
+}
+
+#[test]
+fn failed_pack_preserves_the_previous_manifest_and_packed_files() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets/nested")).unwrap();
+    fs::write(project.path().join("assets/a.bin"), b"old-a").unwrap();
+    fs::write(project.path().join("assets/nested/b.bin"), b"old-b").unwrap();
+    let output = tempfile::tempdir().unwrap();
+    pack_project(project.path(), output.path()).unwrap();
+    fs::write(output.path().join("notes.txt"), b"user-owned").unwrap();
+
+    fs::write(project.path().join("assets/a.bin"), b"new-a").unwrap();
+    fs::write(project.path().join("assets/nested/b.bin"), b"new-b").unwrap();
+    fs::remove_file(output.path().join("assets/nested/b.bin")).unwrap();
+    fs::remove_dir(output.path().join("assets/nested")).unwrap();
+    fs::write(output.path().join("assets/nested"), b"user collision").unwrap();
+    let before_manifest = fs::read(output.path().join("assets.manifest.json")).unwrap();
+    let before_a = fs::read(output.path().join("assets/a.bin")).unwrap();
+    let before_collision = fs::read(output.path().join("assets/nested")).unwrap();
+
+    assert!(pack_project(project.path(), output.path()).is_err());
+
+    assert_eq!(
+        fs::read(output.path().join("assets.manifest.json")).unwrap(),
+        before_manifest
+    );
+    assert_eq!(
+        fs::read(output.path().join("assets/a.bin")).unwrap(),
+        before_a
+    );
+    assert_eq!(
+        fs::read(output.path().join("assets/nested")).unwrap(),
+        before_collision
+    );
+    assert_eq!(
+        fs::read(output.path().join("notes.txt")).unwrap(),
+        b"user-owned"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn propagates_non_not_found_errors_while_probing_asset_roots() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let project = tempfile::tempdir().unwrap();
+    fs::set_permissions(project.path(), fs::Permissions::from_mode(0o000)).unwrap();
+
+    let result = validate_project_assets(project.path());
+
+    fs::set_permissions(project.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("assets"), "{error}");
+}
+
 #[cfg(unix)]
 #[test]
 fn rejects_symlinks_that_escape_project_root() {

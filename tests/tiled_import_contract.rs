@@ -164,6 +164,82 @@ fn rejects_compressed_base64_with_file_context_without_replacing_output() {
 }
 
 #[test]
+fn rejects_empty_csv_cells_instead_of_silently_dropping_them() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("maps")).unwrap();
+    fs::create_dir_all(project.path().join("tiles")).unwrap();
+    fs::create_dir_all(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/sheet.png"), [1]).unwrap();
+    fs::write(
+        project.path().join("tiles/terrain.tsx"),
+        r#"<tileset name="terrain" tilewidth="8" tileheight="8" tilecount="1" columns="1"><image source="../assets/sheet.png" width="8" height="8"/></tileset>"#,
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("maps/empty-cell.tmx"),
+        r#"<map orientation="orthogonal" width="1" height="1" tilewidth="8" tileheight="8"><tileset firstgid="1" source="../tiles/terrain.tsx"/><layer id="1" name="ground" width="1" height="1"><data encoding="csv">1,</data></layer></map>"#,
+    )
+    .unwrap();
+    let output = project.path().join("worlds/empty-cell.world2d.json");
+
+    let error = import_tiled(
+        &project.path().join("maps/empty-cell.tmx"),
+        &output,
+        project.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("empty-cell.tmx"), "{error}");
+    assert!(error.contains("empty CSV cell"), "{error}");
+    assert!(!output.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_tiled_asset_symlink_escape_without_writing_world() {
+    use std::os::unix::fs::symlink;
+
+    let project = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("maps")).unwrap();
+    fs::create_dir_all(project.path().join("tiles")).unwrap();
+    fs::create_dir_all(project.path().join("assets")).unwrap();
+    fs::write(external.path().join("outside.png"), [1, 2, 3]).unwrap();
+    symlink(
+        external.path().join("outside.png"),
+        project.path().join("assets/outside.png"),
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("tiles/terrain.tsx"),
+        r#"<tileset name="terrain" tilewidth="8" tileheight="8" tilecount="1" columns="1"><image source="../assets/outside.png" width="8" height="8"/></tileset>"#,
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("maps/level.tmx"),
+        r#"<map orientation="orthogonal" width="1" height="1" tilewidth="8" tileheight="8"><tileset firstgid="1" source="../tiles/terrain.tsx"/><layer id="1" name="ground" width="1" height="1"><data encoding="csv">1</data></layer></map>"#,
+    )
+    .unwrap();
+    let output = project.path().join("worlds/level.world2d.json");
+
+    let error = import_tiled(
+        &project.path().join("maps/level.tmx"),
+        &output,
+        project.path(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(
+        error.contains("outside") && error.contains("project root"),
+        "{error}"
+    );
+    assert!(error.contains("outside.png"), "{error}");
+    assert!(!output.exists());
+}
+
+#[test]
 fn rejects_isometric_map_with_actionable_orientation_diagnostic() {
     let fixture_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/tiled/unsupported-orientation");

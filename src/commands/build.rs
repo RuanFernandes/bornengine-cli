@@ -71,16 +71,20 @@ pub fn build(
         &output_name,
         extension,
     )?;
-    let output = run_perry_compile(&context, &artifact.output, verbose)?;
-    ensure_success("perry compile", &output)?;
-    if !artifact.output.is_file() {
-        bail!(
-            "Perry completed successfully but did not create {}",
-            artifact.output.display()
-        );
-    }
-    pack_project(&context.project_root, &artifact.directory)?;
-    let recorded = record_build_files(&context.project_root, &artifact.directory)?;
+    let operation = (|| {
+        let output = run_perry_compile(&context, &artifact.output, verbose)?;
+        ensure_success("perry compile", &output)?;
+        if !artifact.output.is_file() {
+            bail!(
+                "Perry completed successfully but did not create {}",
+                artifact.output.display()
+            );
+        }
+        pack_project(&context.project_root, &artifact.directory)?;
+        Ok(output)
+    })();
+    let (output, recorded) =
+        finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     if recorded == 0 {
         bail!("Perry completed successfully without creating any build files");
     }
@@ -119,19 +123,22 @@ pub fn run(
         &output_name,
         context.target.target.output_extension(),
     )?;
-    let output = run_perry_compile(&context, &artifact.output, verbose)?;
-    ensure_success("perry compile", &output)?;
-    if !artifact.output.is_file() {
-        bail!(
-            "Perry completed successfully but did not create {}",
-            artifact.output.display()
-        );
-    }
+    let operation = (|| {
+        let output = run_perry_compile(&context, &artifact.output, verbose)?;
+        ensure_success("perry compile", &output)?;
+        if !artifact.output.is_file() {
+            bail!(
+                "Perry completed successfully but did not create {}",
+                artifact.output.display()
+            );
+        }
+        pack_project(&context.project_root, &artifact.directory)?;
+        Ok(output)
+    })();
+    let (output, _) = finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     if verbose {
         print_output(&output);
     }
-    pack_project(&context.project_root, &artifact.directory)?;
-    record_build_files(&context.project_root, &artifact.directory)?;
     println!("{}", ui::paint("Launching game...", Tone::Info));
     let args = program_args.iter().map(OsString::from).collect::<Vec<_>>();
     inherited_command(
@@ -169,22 +176,58 @@ pub fn dev(
         &output_name,
         context.target.target.output_extension(),
     )?;
-    pack_project(&context.project_root, &artifact.directory)?;
-    let preexisting_objects = compiler_object_files(&context.project_root)?;
+    let preexisting_objects = match compiler_object_files(&context.project_root) {
+        Ok(objects) => objects,
+        Err(error) => {
+            let operation: Result<i32> = Err(error);
+            let _ = finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
+            unreachable!("a failed operation cannot return a completed build artifact");
+        }
+    };
     let args = perry_dev_args(
         &context.entry,
         &artifact.output,
         &assets.watch_directories,
         verbose,
     );
-    let exit_code = inherited_command("perry", &args, Some(&context.project_root), verbose)?;
-    move_new_compiler_objects(
+    let command_result = inherited_command("perry", &args, Some(&context.project_root), verbose);
+    let move_result = move_new_compiler_objects(
         &context.project_root,
         &artifact.directory,
         &preexisting_objects,
-    )?;
-    record_build_files(&context.project_root, &artifact.directory)?;
+    );
+    let operation = combine_dev_results(command_result, move_result);
+    let (exit_code, _) =
+        finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     Ok(exit_code)
+}
+
+fn combine_dev_results(command_result: Result<i32>, move_result: Result<usize>) -> Result<i32> {
+    match (command_result, move_result) {
+        (Ok(exit_code), Ok(_)) => Ok(exit_code),
+        (Err(command_error), Ok(_)) => Err(command_error),
+        (Ok(_), Err(move_error)) => Err(move_error),
+        (Err(command_error), Err(move_error)) => Err(command_error.context(format!(
+            "also failed to move Perry intermediates into the managed build directory: {move_error:#}"
+        ))),
+    }
+}
+
+fn finish_build_artifact<T>(
+    project_root: &Path,
+    build_directory: &Path,
+    operation: Result<T>,
+) -> Result<(T, usize)> {
+    let recording = record_build_files(project_root, build_directory);
+    match (operation, recording) {
+        (Ok(value), Ok(count)) => Ok((value, count)),
+        (Err(operation_error), Ok(_)) => Err(operation_error),
+        (Ok(_), Err(recording_error)) => Err(recording_error)
+            .context("build operation succeeded but its outputs were not recorded"),
+        (Err(operation_error), Err(recording_error)) => Err(operation_error.context(format!(
+            "additionally failed to record partial build outputs: {recording_error:#}"
+        ))),
+    }
 }
 
 pub fn check(
