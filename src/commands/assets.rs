@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -380,7 +380,16 @@ fn inspect_media(path: &Path, relative: &str) -> Option<Result<MediaProbe>> {
         Ok(bytes) => bytes,
         Err(error) => return recognized_extension.then_some(Err(error.into())),
     };
-    let signature = media_signature(&bytes);
+    let signature = if bytes.starts_with(&[0xff, 0xd8]) {
+        let dimensions = (|| -> MediaDimensions {
+            let file = fs::File::open(path).map_err(|_| "unreadable JPEG header")?;
+            let length = file.metadata().map_err(|_| "unreadable JPEG header")?.len();
+            jpeg_dimensions(&mut io::BufReader::new(file), length)
+        })();
+        Some((MediaFormat::Jpeg, dimensions))
+    } else {
+        media_signature(&bytes)
+    };
     if !recognized_extension && signature.is_none() {
         return None;
     }
@@ -429,7 +438,10 @@ type MediaDimensions = std::result::Result<Option<(u32, u32)>, &'static str>;
 
 fn media_signature(bytes: &[u8]) -> Option<(MediaFormat, MediaDimensions)> {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        let dimensions = if bytes.len() >= 24 && &bytes[12..16] == b"IHDR" {
+        let dimensions = if bytes.len() >= 33
+            && u32::from_be_bytes(bytes[8..12].try_into().unwrap()) == 13
+            && &bytes[12..16] == b"IHDR"
+        {
             let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
             let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
             valid_dimensions(width, height)
@@ -439,10 +451,13 @@ fn media_signature(bytes: &[u8]) -> Option<(MediaFormat, MediaDimensions)> {
         return Some((MediaFormat::Png, dimensions));
     }
     if bytes.starts_with(&[0xff, 0xd8]) {
-        return Some((MediaFormat::Jpeg, jpeg_dimensions(bytes)));
+        return Some((
+            MediaFormat::Jpeg,
+            jpeg_dimensions(&mut io::Cursor::new(bytes), bytes.len() as u64),
+        ));
     }
     if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        let dimensions = if bytes.len() >= 10 {
+        let dimensions = if bytes.len() >= 13 {
             valid_dimensions(
                 u32::from(u16::from_le_bytes(bytes[6..8].try_into().unwrap())),
                 u32::from(u16::from_le_bytes(bytes[8..10].try_into().unwrap())),
@@ -453,14 +468,17 @@ fn media_signature(bytes: &[u8]) -> Option<(MediaFormat, MediaDimensions)> {
         return Some((MediaFormat::Gif, dimensions));
     }
     if bytes.starts_with(b"BM") {
-        let dimensions =
-            if bytes.len() >= 26 && u32::from_le_bytes(bytes[14..18].try_into().unwrap()) >= 40 {
-                let width = i32::from_le_bytes(bytes[18..22].try_into().unwrap()).unsigned_abs();
-                let height = i32::from_le_bytes(bytes[22..26].try_into().unwrap()).unsigned_abs();
-                valid_dimensions(width, height)
-            } else {
-                Err("truncated BMP header")
-            };
+        let dimensions = if bytes.len() >= 54
+            && u32::from_le_bytes(bytes[14..18].try_into().unwrap()) >= 40
+            && bytes.len().saturating_sub(14)
+                >= u32::from_le_bytes(bytes[14..18].try_into().unwrap()) as usize
+        {
+            let width = i32::from_le_bytes(bytes[18..22].try_into().unwrap()).unsigned_abs();
+            let height = i32::from_le_bytes(bytes[22..26].try_into().unwrap()).unsigned_abs();
+            valid_dimensions(width, height)
+        } else {
+            Err("truncated BMP header")
+        };
         return Some((MediaFormat::Bmp, dimensions));
     }
     if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
@@ -539,41 +557,87 @@ fn valid_dimensions(width: u32, height: u32) -> MediaDimensions {
     }
 }
 
-fn jpeg_dimensions(bytes: &[u8]) -> MediaDimensions {
-    let mut offset = 2;
-    while offset + 4 <= bytes.len() {
-        if bytes[offset] != 0xff {
+fn jpeg_dimensions<R: Read + Seek>(reader: &mut R, file_length: u64) -> MediaDimensions {
+    const MAX_HEADER_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_SEGMENTS: usize = 4096;
+    const MAX_MARKER_FILL: usize = 1024;
+    let mut soi = [0_u8; 2];
+    reader
+        .read_exact(&mut soi)
+        .map_err(|_| "truncated JPEG header")?;
+    if soi != [0xff, 0xd8] {
+        return Err("invalid JPEG signature");
+    }
+    for _ in 0..MAX_SEGMENTS {
+        if reader
+            .stream_position()
+            .map_err(|_| "unreadable JPEG header")?
+            >= MAX_HEADER_BYTES
+        {
+            return Ok(None);
+        }
+        let mut marker = [0_u8; 1];
+        reader
+            .read_exact(&mut marker)
+            .map_err(|_| "truncated JPEG marker")?;
+        if marker[0] != 0xff {
             return Err("invalid JPEG marker");
         }
-        let marker = bytes[offset + 1];
-        offset += 2;
-        if marker == 0xd9 || marker == 0xda {
-            break;
+        for _ in 0..MAX_MARKER_FILL {
+            reader
+                .read_exact(&mut marker)
+                .map_err(|_| "truncated JPEG marker")?;
+            if marker[0] != 0xff {
+                break;
+            }
         }
-        if marker == 0xff || marker == 0x00 {
-            continue;
+        if marker[0] == 0xff {
+            return Ok(None);
         }
-        let length = usize::from(u16::from_be_bytes(
-            bytes[offset..offset + 2].try_into().unwrap(),
-        ));
-        if length < 2 || offset + length > bytes.len() {
+        match marker[0] {
+            0x00 | 0xd8 => return Err("invalid JPEG marker"),
+            0xd9 | 0xda => return Err("JPEG dimensions not found in header"),
+            0x01 | 0xd0..=0xd7 => continue,
+            _ => {}
+        }
+        let mut size = [0_u8; 2];
+        reader
+            .read_exact(&mut size)
+            .map_err(|_| "truncated JPEG segment")?;
+        let size = u64::from(u16::from_be_bytes(size));
+        if size < 2 {
+            return Err("invalid JPEG segment length");
+        }
+        let start = reader
+            .stream_position()
+            .map_err(|_| "unreadable JPEG header")?;
+        let end = start + size - 2;
+        if end > file_length {
             return Err("truncated JPEG segment");
         }
-        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
-            if length < 7 {
+        if end > MAX_HEADER_BYTES {
+            return Ok(None);
+        }
+        if matches!(marker[0], 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if size < 8 {
                 return Err("truncated JPEG dimensions");
             }
-            let height = u32::from(u16::from_be_bytes(
-                bytes[offset + 3..offset + 5].try_into().unwrap(),
-            ));
-            let width = u32::from(u16::from_be_bytes(
-                bytes[offset + 5..offset + 7].try_into().unwrap(),
-            ));
+            let mut frame = [0_u8; 6];
+            reader
+                .read_exact(&mut frame)
+                .map_err(|_| "truncated JPEG dimensions")?;
+            if frame[5] == 0 || size < 8 + 3 * u64::from(frame[5]) {
+                return Err("invalid JPEG frame header");
+            }
+            let height = u32::from(u16::from_be_bytes([frame[1], frame[2]]));
+            let width = u32::from(u16::from_be_bytes([frame[3], frame[4]]));
             return valid_dimensions(width, height);
         }
-        offset += length;
+        reader
+            .seek(SeekFrom::Start(end))
+            .map_err(|_| "unreadable JPEG header")?;
     }
-    Err("JPEG dimensions not found in header")
+    Ok(None)
 }
 
 pub fn validate_project_assets_with_options(
@@ -618,47 +682,46 @@ pub fn validate_project_assets_with_options(
         if let Some(parent) = path.parent() {
             watch_directories.insert(parent.to_path_buf());
         }
-        if settings
+        let ignored = settings
             .ignored_paths
             .iter()
-            .any(|pattern| audit_glob_matches(pattern, relative))
-        {
-            continue;
-        }
-        audited_bytes = audited_bytes.saturating_add(metadata.len());
-        if !referenced.contains(relative)
-            && relative
-                .split('/')
-                .next()
-                .is_some_and(|root| ASSET_ROOTS.contains(&root))
-        {
-            let severity = match settings.orphan_policy {
-                OrphanPolicy::Ignore => None,
-                OrphanPolicy::Warn => Some(AssetSeverity::Warning),
-                OrphanPolicy::Error => Some(AssetSeverity::Error),
-            };
-            if let Some(severity) = severity {
+            .any(|pattern| audit_glob_matches(pattern, relative));
+        if !ignored {
+            audited_bytes = audited_bytes.saturating_add(metadata.len());
+            if !referenced.contains(relative)
+                && relative
+                    .split('/')
+                    .next()
+                    .is_some_and(|root| ASSET_ROOTS.contains(&root))
+            {
+                let severity = match settings.orphan_policy {
+                    OrphanPolicy::Ignore => None,
+                    OrphanPolicy::Warn => Some(AssetSeverity::Warning),
+                    OrphanPolicy::Error => Some(AssetSeverity::Error),
+                };
+                if let Some(severity) = severity {
+                    diagnostics.push(audit_diagnostic(
+                        AssetDiagnosticCode::OrphanAsset,
+                        severity,
+                        relative,
+                        "asset has no known static or declared dynamic reference",
+                        None,
+                        None,
+                    ));
+                }
+            }
+            if let Some(limit) = settings.max_file_bytes
+                && metadata.len() > limit
+            {
                 diagnostics.push(audit_diagnostic(
-                    AssetDiagnosticCode::OrphanAsset,
-                    severity,
+                    AssetDiagnosticCode::FileSizeLimit,
+                    AssetSeverity::Error,
                     relative,
-                    "asset has no known static or declared dynamic reference",
-                    None,
-                    None,
+                    "asset exceeds file byte limit",
+                    Some(metadata.len()),
+                    Some(limit),
                 ));
             }
-        }
-        if let Some(limit) = settings.max_file_bytes
-            && metadata.len() > limit
-        {
-            diagnostics.push(audit_diagnostic(
-                AssetDiagnosticCode::FileSizeLimit,
-                AssetSeverity::Warning,
-                relative,
-                "asset exceeds file byte limit",
-                Some(metadata.len()),
-                Some(limit),
-            ));
         }
         if let Some(media) = inspect_media(path, relative) {
             match media {
@@ -674,14 +737,16 @@ pub fn validate_project_assets_with_options(
                         ));
                     }
                     if let Some((width, height)) = probe.dimensions {
-                        audited_pixels = audited_pixels
-                            .saturating_add(u64::from(width).saturating_mul(u64::from(height)));
-                        if let Some(limit) = settings.max_image_dimension {
+                        if !ignored {
+                            audited_pixels = audited_pixels
+                                .saturating_add(u64::from(width).saturating_mul(u64::from(height)));
+                        }
+                        if let Some(limit) = settings.max_image_dimension.filter(|_| !ignored) {
                             let maximum = width.max(height);
                             if maximum > limit {
                                 diagnostics.push(audit_diagnostic(
                                     AssetDiagnosticCode::ImageDimensionLimit,
-                                    AssetSeverity::Warning,
+                                    AssetSeverity::Error,
                                     relative,
                                     "image dimension exceeds limit",
                                     Some(u64::from(maximum)),
@@ -707,7 +772,7 @@ pub fn validate_project_assets_with_options(
     {
         diagnostics.push(audit_diagnostic(
             AssetDiagnosticCode::TotalSizeLimit,
-            AssetSeverity::Warning,
+            AssetSeverity::Error,
             "",
             "audited assets exceed total byte limit",
             Some(audited_bytes),
@@ -719,7 +784,7 @@ pub fn validate_project_assets_with_options(
     {
         diagnostics.push(audit_diagnostic(
             AssetDiagnosticCode::TotalImagePixelsLimit,
-            AssetSeverity::Warning,
+            AssetSeverity::Error,
             "",
             "audited images exceed total pixel limit",
             Some(audited_pixels),
@@ -1693,7 +1758,7 @@ fn create_safe_parent_directories(
 
 #[cfg(test)]
 mod tests {
-    use super::{media_signature, pack_project, pack_project_with_rename};
+    use super::{jpeg_dimensions, media_signature, pack_project, pack_project_with_rename};
     use std::fs;
 
     #[test]
@@ -1706,6 +1771,35 @@ mod tests {
         lossless.truncate(23);
         assert!(media_signature(&lossy).unwrap().1.is_err());
         assert!(media_signature(&lossless).unwrap().1.is_err());
+    }
+
+    #[test]
+    fn image_headers_truncated_after_dimensions_are_invalid() {
+        let png =
+            &include_bytes!("../../tests/fixtures/asset_audit/complete/assets/referenced.png")
+                [..24];
+        let gif = b"GIF89a\x01\0\x01\0";
+        let mut bmp = vec![0_u8; 26];
+        bmp[..2].copy_from_slice(b"BM");
+        bmp[14..18].copy_from_slice(&40_u32.to_le_bytes());
+        bmp[18..22].copy_from_slice(&1_i32.to_le_bytes());
+        bmp[22..26].copy_from_slice(&1_i32.to_le_bytes());
+        for bytes in [png, gif.as_slice(), bmp.as_slice()] {
+            assert!(media_signature(bytes).unwrap().1.is_err());
+        }
+    }
+
+    #[test]
+    fn jpeg_segment_scan_cap_is_inconclusive_instead_of_invalid() {
+        let mut bytes = vec![0xff, 0xd8];
+        for _ in 0..4097 {
+            bytes.extend_from_slice(&[0xff, 0xe1, 0x00, 0x02]);
+        }
+        bytes.extend_from_slice(
+            &include_bytes!("../../tests/fixtures/asset_audit/jpeg-long-app.jpg")[2..],
+        );
+        let result = jpeg_dimensions(&mut std::io::Cursor::new(&bytes), bytes.len() as u64);
+        assert_eq!(result, Ok(None));
     }
 
     #[test]

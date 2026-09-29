@@ -391,6 +391,13 @@ fn audit_fixture_detects_bad_media_and_budget_measurements() {
                     && item.code == code
                     && item.measured == measured
                     && item.limit == limit
+                    && (!matches!(
+                        code,
+                        AssetDiagnosticCode::FileSizeLimit
+                            | AssetDiagnosticCode::TotalSizeLimit
+                            | AssetDiagnosticCode::ImageDimensionLimit
+                            | AssetDiagnosticCode::TotalImagePixelsLimit
+                    ) || item.severity == AssetSeverity::Error)
             }),
             "missing {code:?} for {path}: {:?}",
             report.diagnostics
@@ -404,6 +411,98 @@ fn audit_fixture_detects_bad_media_and_budget_measurements() {
     );
     assert!(report.diagnostics.windows(2).all(|pair| {
         (pair[0].path.as_str(), pair[0].code) <= (pair[1].path.as_str(), pair[1].code)
+    }));
+}
+
+#[test]
+fn an_exceeded_configured_budget_fails_default_validation_without_orphans() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/used.bin"), [1, 2, 3]).unwrap();
+    fs::write(
+        project.path().join("bornengine.assets.json"),
+        r#"{"version":1,"orphan_severity":"ignore","max_file_bytes":2}"#,
+    )
+    .unwrap();
+    let report =
+        validate_project_assets_with_options(project.path(), &AssetValidationOptions::default())
+            .unwrap();
+    assert_eq!(report.diagnostics.len(), 1);
+    assert_eq!(
+        report.diagnostics[0].code,
+        AssetDiagnosticCode::FileSizeLimit
+    );
+    assert_eq!(report.diagnostics[0].severity, AssetSeverity::Error);
+    assert!(report.has_errors());
+    assert!(validate_project_assets(project.path()).is_err());
+}
+
+#[test]
+fn ignored_files_still_receive_media_header_and_extension_diagnostics() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets/ignored")).unwrap();
+    fs::copy(
+        audit_fixture("complete/assets/malformed.png"),
+        project.path().join("assets/ignored/broken.png"),
+    )
+    .unwrap();
+    fs::copy(
+        audit_fixture("complete/assets/mismatch.jpg"),
+        project.path().join("assets/ignored/wrong.jpg"),
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("bornengine.assets.json"),
+        r#"{"version":1,"ignored_paths":["assets/ignored/**"],"orphan_severity":"error","max_file_bytes":1,"max_total_bytes":1,"max_image_dimension":1,"max_total_image_pixels":1}"#,
+    )
+    .unwrap();
+    let report =
+        validate_project_assets_with_options(project.path(), &AssetValidationOptions::default())
+            .unwrap();
+    assert_eq!(
+        report
+            .diagnostics
+            .iter()
+            .map(|item| (item.path.as_str(), item.code))
+            .collect::<Vec<_>>(),
+        [
+            (
+                "assets/ignored/broken.png",
+                AssetDiagnosticCode::InvalidMediaHeader
+            ),
+            (
+                "assets/ignored/wrong.jpg",
+                AssetDiagnosticCode::ExtensionMismatch
+            ),
+        ]
+    );
+}
+
+#[test]
+fn jpeg_with_large_valid_app_metadata_reaches_sof_without_loading_the_payload() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir(project.path().join("assets")).unwrap();
+    fs::copy(
+        audit_fixture("jpeg-long-app.jpg"),
+        project.path().join("assets/long.jpg"),
+    )
+    .unwrap();
+    let report = validate_project_assets_with_options(
+        project.path(),
+        &AssetValidationOptions {
+            max_image_dimension: Some(3),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(report.diagnostics.iter().any(|item| {
+        item.path == "assets/long.jpg"
+            && item.code == AssetDiagnosticCode::ImageDimensionLimit
+            && item.measured == Some(4)
+            && item.limit == Some(3)
+    }));
+    assert!(!report.diagnostics.iter().any(|item| {
+        item.path == "assets/long.jpg" && item.code == AssetDiagnosticCode::InvalidMediaHeader
     }));
 }
 
@@ -426,7 +525,7 @@ fn default_validation_observes_configured_error_severity() {
     let error = validate_project_assets(&audit_fixture("complete"))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("orphan_asset"), "{error}");
+    assert!(error.contains("total_size_limit"), "{error}");
     let project = tempfile::tempdir().unwrap();
     fs::create_dir(project.path().join("assets")).unwrap();
     fs::write(project.path().join("assets/unused.png"), b"bad").unwrap();
