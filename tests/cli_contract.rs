@@ -1,5 +1,5 @@
 use bornengine_cli::cli::{Cli, Commands};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use std::path::Path;
 
 #[test]
@@ -98,4 +98,56 @@ fn create_is_available_as_a_separate_interactive_command() {
 fn verbose_flag_is_available_after_a_subcommand() {
     let cli = Cli::try_parse_from(["bornengine", "doctor", "--verbose"]).unwrap();
     assert_eq!(cli.verbose, 1);
+}
+
+#[test]
+fn tiled_import_command_accepts_map_and_output_paths() {
+    let cli = Cli::try_parse_from([
+        "bornengine",
+        "import",
+        "tiled",
+        "maps/level.tmx",
+        "--output",
+        "world/level.world2d.json",
+    ])
+    .unwrap();
+
+    assert!(matches!(
+        cli.command,
+        Commands::Import { command } if matches!(&command,
+            bornengine_cli::cli::ImportCommands::Tiled { map_file, output }
+            if map_file.as_path() == Path::new("maps/level.tmx") && output.as_path() == Path::new("world/level.world2d.json"))
+    ));
+}
+
+#[test]
+fn asset_validate_and_pack_commands_accept_project_and_output() {
+    let validate = Cli::try_parse_from(["bornengine", "assets", "validate", "game"]).unwrap();
+    assert!(matches!(
+        validate.command,
+        Commands::Assets { command: bornengine_cli::cli::AssetCommands::Validate { project_root: Some(path) } }
+            if path == Path::new("game")
+    ));
+
+    let pack = Cli::try_parse_from([
+        "bornengine",
+        "assets",
+        "pack",
+        "game",
+        "--output",
+        "game/.bornengine/assets",
+    ])
+    .unwrap();
+    assert!(matches!(
+        pack.command,
+        Commands::Assets { command: bornengine_cli::cli::AssetCommands::Pack { project_root: Some(root), output } }
+            if root == Path::new("game") && output == Path::new("game/.bornengine/assets")
+    ));
+}
+
+#[test]
+fn top_level_help_lists_import_and_asset_management_commands() {
+    let help = Cli::command().render_long_help().to_string();
+    assert!(help.contains("import"), "{help}");
+    assert!(help.contains("assets"), "{help}");
 }

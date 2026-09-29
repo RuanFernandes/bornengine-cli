@@ -1,0 +1,79 @@
+{
+  "format": "bornengine.world2d",
+  "version": 1,
+  "id": "tiny",
+  "name": "Tiny",
+  "assets": ["assets/terrain.png"],
+  "tilesets": [
+    {
+      "id": "terrain",
+      "image": "assets/terrain.png",
+      "tileWidth": 16,
+      "tileHeight": 16,
+      "columns": 2,
+      "tileCount": 4,
+      "margin": {"x": 1, "y": 1},
+      "spacing": {"x": 2, "y": 2},
+      "tiles": [
+        {
+          "tileId": 0,
+          "collision": {"x": 0, "y": 0, "width": 16, "height": 16},
+          "properties": {
+            "material": {"type": "string", "value": "stone"},
+            "solid": {"type": "bool", "value": true}
+          }
+        }
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "id": "layer-1",
+      "type": "tilemap",
+      "name": "Ground",
+      "visible": true,
+      "opacity": 0.75,
+      "offset": {"x": 2.0, "y": 3.0},
+      "parallax": {"x": 0.5, "y": 1.0},
+      "width": 4,
+      "height": 1,
+      "tileSize": {"x": 16, "y": 16},
+      "data": [
+        {"tilesetId": "terrain", "tileId": 0, "flipX": true, "flipY": false, "flipDiagonal": false},
+        {"tilesetId": "terrain", "tileId": 1, "flipX": false, "flipY": true, "flipDiagonal": false},
+        {"tilesetId": "terrain", "tileId": 2, "flipX": false, "flipY": false, "flipDiagonal": true},
+        {"tilesetId": "terrain", "tileId": 3, "flipX": true, "flipY": true, "flipDiagonal": true}
+      ]
+    },
+    {
+      "id": "layer-2",
+      "type": "objects",
+      "name": "Collision",
+      "visible": true,
+      "opacity": 1.0,
+      "offset": {"x": 0.0, "y": 0.0},
+      "parallax": {"x": 1.0, "y": 1.0},
+      "objects": [
+        {
+          "id": "object-7",
+          "name": "Floor",
+          "type": "collision",
+          "position": {"x": 0.0, "y": 16.0},
+          "rotation": 0.0,
+          "size": {"x": 64.0, "y": 8.0},
+          "origin": {"x": 0.0, "y": 0.0},
+          "visible": true,
+          "tags": [],
+          "properties": {
+            "friction": {"type": "float", "value": 0.25},
+            "oneWay": {"type": "bool", "value": true}
+          },
+          "components": [
+            {"kind": "physicsBody2D", "data": {"type": "static", "shape": {"type": "box", "width": 64.0, "height": 8.0}, "isSensor": false, "layer": 1, "mask": 2147483647}}
+          ]
+        }
+      ]
+    }
+  ],
+  "metadata": {}
+}

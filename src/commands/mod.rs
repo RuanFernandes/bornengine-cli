@@ -1,8 +1,10 @@
+pub mod assets;
 pub mod build;
 pub mod config;
 pub mod create;
 pub mod diagnostics;
 pub mod engine;
+pub mod import;
 pub mod project;
 pub mod update;
 
@@ -80,6 +82,39 @@ pub fn execute(cli: Cli) -> Result<i32> {
         }
         Commands::Update => update::check(),
         Commands::Config { command } => config::execute(command),
+        Commands::Import { command } => match command {
+            crate::cli::ImportCommands::Tiled { map_file, output } => {
+                let project_root = std::env::current_dir()?;
+                import::import_tiled(&map_file, &output, &project_root)?;
+                println!("Imported {} to {}", map_file.display(), output.display());
+                Ok(0)
+            }
+        },
+        Commands::Assets { command } => match command {
+            crate::cli::AssetCommands::Validate { project_root } => {
+                let root = project_root.unwrap_or(std::env::current_dir()?);
+                let summary = assets::validate_project_assets(&root)?;
+                println!(
+                    "Validated {} project assets ({} bytes)",
+                    summary.files, summary.bytes
+                );
+                Ok(0)
+            }
+            crate::cli::AssetCommands::Pack {
+                project_root,
+                output,
+            } => {
+                let root = project_root.unwrap_or(std::env::current_dir()?);
+                let summary = assets::pack_project(&root, &output)?;
+                println!(
+                    "Packed {} assets ({} bytes) to {}",
+                    summary.files,
+                    summary.bytes,
+                    output.display()
+                );
+                Ok(0)
+            }
+        },
         Commands::Check {
             entry_file,
             os,

@@ -77,3 +77,26 @@ fn dev_output_uses_perry_ignored_directory_and_clean_tracks_it() {
     assert_eq!(clean_build_artifacts(project.path()).unwrap(), 1);
     assert!(!dev.output.exists());
 }
+
+#[test]
+fn clean_removes_packaged_assets_and_manifest_inside_managed_build_directory() {
+    use bornengine_cli::commands::assets::pack_project;
+
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir_all(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/sound.bin"), [4, 3, 2, 1]).unwrap();
+    let build = begin_build(project.path(), "linux", "sample", None).unwrap();
+    fs::write(&build.output, "binary").unwrap();
+    pack_project(project.path(), &build.directory).unwrap();
+    record_build_files(project.path(), &build.directory).unwrap();
+
+    let packed_file = build.directory.join("assets/sound.bin");
+    let manifest = build.directory.join("assets.manifest.json");
+    assert!(packed_file.exists());
+    assert!(manifest.exists());
+    assert_eq!(clean_build_artifacts(project.path()).unwrap(), 3);
+    assert!(!build.output.exists());
+    assert!(!packed_file.exists());
+    assert!(!manifest.exists());
+    assert!(project.path().join("assets/sound.bin").exists());
+}

@@ -148,6 +148,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Import maps from external authoring tools.
+    Import {
+        #[command(subcommand)]
+        command: ImportCommands,
+    },
+    /// Validate or package project assets.
+    Assets {
+        #[command(subcommand)]
+        command: AssetCommands,
+    },
     /// Check TypeScript compatibility without creating a binary.
     Check {
         #[arg(help = "TypeScript entry file")]
@@ -165,6 +175,33 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ImportCommands {
+    /// Convert a Tiled orthogonal TMX map to BornEngine world2d JSON.
+    Tiled {
+        #[arg(help = "Tiled TMX map file")]
+        map_file: PathBuf,
+        #[arg(long, required = true, help = "Output .world2d.json file")]
+        output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AssetCommands {
+    /// Check project asset references and paths.
+    Validate {
+        #[arg(help = "Project root (defaults to the current directory)")]
+        project_root: Option<PathBuf>,
+    },
+    /// Copy project assets and write a deterministic manifest.
+    Pack {
+        #[arg(help = "Project root (defaults to the current directory)")]
+        project_root: Option<PathBuf>,
+        #[arg(long, required = true, help = "Directory where assets will be copied")]
+        output: PathBuf,
     },
 }
 
