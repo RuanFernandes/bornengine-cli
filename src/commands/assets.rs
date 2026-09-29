@@ -106,7 +106,7 @@ impl AssetValidationReport {
     pub fn new(summary: AssetSummary, mut diagnostics: Vec<AssetDiagnostic>) -> Result<Self> {
         for diagnostic in &diagnostics {
             if !diagnostic.path.is_empty() {
-                validate_audit_path(&diagnostic.path, false)
+                validate_project_relative_path(&diagnostic.path)
                     .with_context(|| format!("unsafe diagnostic path `{}`", diagnostic.path))?;
             }
         }
@@ -257,6 +257,21 @@ fn manifest_paths_field(
 }
 
 fn validate_audit_path(path: &str, globs: bool) -> Result<()> {
+    validate_project_relative_path(path)?;
+    if !globs {
+        return Ok(());
+    }
+    for component in path.split('/') {
+        if component.contains(['?', '[', ']', '{', '}'])
+            || (component.contains("**") && component != "**")
+        {
+            bail!("{AUDIT_MANIFEST_NAME}: unsupported glob syntax in `{path}`");
+        }
+    }
+    Ok(())
+}
+
+fn validate_project_relative_path(path: &str) -> Result<()> {
     if path.is_empty()
         || path.starts_with('/')
         || path.contains('\\')
@@ -266,14 +281,6 @@ fn validate_audit_path(path: &str, globs: bool) -> Result<()> {
             .any(|component| component.is_empty() || component == "." || component == "..")
     {
         bail!("{AUDIT_MANIFEST_NAME}: unsafe project-relative path `{path}`");
-    }
-    for component in path.split('/') {
-        if component.contains(['?', '[', ']', '{', '}'])
-            || (!globs && component.contains('*'))
-            || (globs && component.contains("**") && component != "**")
-        {
-            bail!("{AUDIT_MANIFEST_NAME}: unsupported glob syntax in `{path}`");
-        }
     }
     Ok(())
 }

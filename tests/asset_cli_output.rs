@@ -40,6 +40,57 @@ fn json_stdout_is_one_versioned_report_with_no_human_text() {
 }
 
 #[test]
+fn literal_glob_characters_in_asset_names_remain_valid_diagnostic_paths() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = project.path().join("assets");
+    fs::create_dir(&assets).unwrap();
+    fs::write(assets.join("icon[1].txt"), "literal bracket path").unwrap();
+    fs::write(assets.join("data{old}.bin"), "literal brace path").unwrap();
+    fs::write(
+        project.path().join("bornengine.assets.json"),
+        r#"{"version":1}"#,
+    )
+    .unwrap();
+
+    let output = run_validate(project.path(), &["--json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let paths = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["assets/data{old}.bin", "assets/icon[1].txt"]);
+}
+
+#[test]
+fn dynamic_paths_treat_glob_metacharacters_as_literal_file_names() {
+    let project = tempfile::tempdir().unwrap();
+    let assets = project.path().join("assets");
+    fs::create_dir(&assets).unwrap();
+    fs::write(assets.join("icon[1].txt"), "dynamic file").unwrap();
+    fs::write(
+        project.path().join("bornengine.assets.json"),
+        r#"{"version":1,"dynamic_paths":["assets/icon[1].txt"],"orphan_severity":"error"}"#,
+    )
+    .unwrap();
+
+    let output = run_validate(project.path(), &["--json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["diagnostics"], json!([]));
+}
+
+#[test]
 fn complete_audit_fixture_emits_only_one_json_report() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asset_audit/complete");
     let output = run_validate(&fixture, &["--json"]);
