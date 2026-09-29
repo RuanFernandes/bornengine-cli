@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -83,26 +84,23 @@ where
 {
     let root = canonical_root(project_root)?;
     let assets = collect_project_assets(&root)?;
-    let output = absolute_output_path(output_directory)?;
-    for source_root in ASSET_ROOTS {
-        if output.starts_with(root.join(source_root)) {
-            bail!(
-                "asset output {} is inside the project asset root `{source_root}`; choose a build or distribution directory",
-                output.display()
-            );
-        }
-    }
+    let output_input = absolute_output_path(output_directory)?;
+    reject_symlink_components(&output_input, "asset output")?;
+    let mut output = canonicalize_existing_prefix(&output_input)?;
+    reject_asset_root_output(&root, &output)?;
     if assets.contains_key(MANIFEST_NAME) {
         bail!("project asset path `{MANIFEST_NAME}` is reserved for the pack manifest");
     }
-    reject_symlink_components(&output, "asset output")?;
     let output_parent = output
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    fs::create_dir_all(output_parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    fs::create_dir_all(&output_parent)
         .with_context(|| format!("could not create output parent {}", output_parent.display()))?;
     reject_symlink_components(&output, "asset output")?;
+    output = canonicalize_existing_prefix(&output)?;
+    reject_asset_root_output(&root, &output)?;
     let output_exists = validate_pack_output_directory(&output)?;
     let old_manifest = if output_exists {
         read_existing_manifest(&output)?
@@ -113,7 +111,7 @@ where
     let new_paths = assets.keys().cloned().collect::<BTreeSet<_>>();
     preflight_pack_output(&output, &old_paths, &new_paths)?;
 
-    let stage = PackStage::create(output_parent)?;
+    let stage = PackStage::create(&output_parent)?;
     let staged_files = stage.0.join("next");
     fs::create_dir(&staged_files).with_context(|| {
         format!(
@@ -493,6 +491,18 @@ fn canonical_root(path: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
+fn reject_asset_root_output(root: &Path, output: &Path) -> Result<()> {
+    for source_root in ASSET_ROOTS {
+        if output.starts_with(root.join(source_root)) {
+            bail!(
+                "asset output {} is inside the project asset root `{source_root}`; choose a build or distribution directory",
+                output.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn collect_project_assets(root: &Path) -> Result<BTreeMap<String, PathBuf>> {
     let mut files = BTreeMap::new();
     let mut spelling_by_normalized = BTreeMap::new();
@@ -852,13 +862,47 @@ fn absolute_output_path(path: &Path) -> Result<PathBuf> {
     Ok(normalized)
 }
 
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
+    let mut current = absolute_output_path(path)?;
+    let mut missing_suffix = Vec::<OsString>::new();
+    loop {
+        match fs::canonicalize(&current) {
+            Ok(mut canonical) => {
+                for component in missing_suffix.iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let name = current.file_name().ok_or_else(|| {
+                    anyhow!("could not resolve asset output path: {}", path.display())
+                })?;
+                missing_suffix.push(name.to_os_string());
+                current = current
+                    .parent()
+                    .ok_or_else(|| {
+                        anyhow!("could not resolve asset output path: {}", path.display())
+                    })?
+                    .to_path_buf();
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("could not resolve asset output path {}", path.display())
+                });
+            }
+        }
+    }
+}
+
 fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
     let absolute = absolute_output_path(path)?;
     let mut current = PathBuf::new();
     for component in absolute.components() {
         current.push(component.as_os_str());
         match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+            Ok(metadata)
+                if metadata.file_type().is_symlink() && !is_standard_macos_path_alias(&current) =>
+            {
                 bail!(
                     "refusing to use symbolic link in {label} path: {}",
                     current.display()
@@ -873,6 +917,23 @@ fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn is_standard_macos_path_alias(path: &Path) -> bool {
+    [
+        (Path::new("/var"), Path::new("/private/var")),
+        (Path::new("/tmp"), Path::new("/private/tmp")),
+    ]
+    .iter()
+    .any(|(alias, target)| {
+        path == *alias && fs::canonicalize(alias).is_ok_and(|resolved| resolved == *target)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn is_standard_macos_path_alias(_path: &Path) -> bool {
+    false
 }
 
 fn create_safe_parent_directories(
