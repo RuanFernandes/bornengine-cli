@@ -36,13 +36,21 @@ pub fn perry_check_args(entry: &Path, target: Option<&str>, verbose: bool) -> Ve
     args
 }
 
-pub fn perry_dev_args(entry: &Path, output: &Path, verbose: bool) -> Vec<OsString> {
+pub fn perry_dev_args(
+    entry: &Path,
+    output: &Path,
+    watch_directories: &[PathBuf],
+    verbose: bool,
+) -> Vec<OsString> {
     let mut args = vec![
         "dev".into(),
         entry.as_os_str().to_owned(),
         "--output".into(),
         output.as_os_str().to_owned(),
     ];
+    for directory in watch_directories {
+        args.extend(["--watch".into(), directory.as_os_str().to_owned()]);
+    }
     if verbose {
         args.push("-v".into());
     }

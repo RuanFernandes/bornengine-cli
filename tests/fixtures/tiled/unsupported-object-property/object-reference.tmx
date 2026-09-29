@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map orientation="orthogonal" width="1" height="1" tilewidth="8" tileheight="8">
+ <tileset firstgid="1" name="inline" tilewidth="8" tileheight="8" tilecount="1" columns="1"><image source="inline.png" width="8" height="8"/></tileset>
+ <layer id="1" name="properties" width="1" height="1"><data encoding="csv">1</data><properties><property name="target" type="object" value="7"/></properties></layer>
+</map>

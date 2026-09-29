@@ -35,6 +35,9 @@ bornengine run main.ts
 | `bornengine run <entry>` | Build and run for the current host. |
 | `bornengine dev <entry>` | Build and run once; pass `--watch` to use Perry's rebuild-and-restart loop. |
 | `bornengine check <entry>` | Run Perry's compatibility check. |
+| `bornengine import tiled <map.tmx> --output <world.world2d.json>` | Convert an orthogonal Tiled map to BornEngine's versioned world format. |
+| `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
+| `bornengine assets pack [project-root] --output <directory>` | Copy project assets and write a deterministic SHA-256 manifest. |
 | `bornengine clean` | Remove only build files recorded by this CLI. |
 | `bornengine doctor` | Check Perry, Rust, the package manager, the project, and host prerequisites. |
 | `bornengine info` / `version` | Show CLI, engine, Perry, project, and host details. |
@@ -54,6 +57,9 @@ bornengine new MyGame --package-manager npm --engine-version 0.4.17
 bornengine build main.ts --name my-game --os linux
 bornengine build main.ts --target ios-simulator
 bornengine dev main.ts --watch
+bornengine import tiled maps/level.tmx --output worlds/level.world2d.json
+bornengine assets validate
+bornengine assets pack --output dist/game
 bornengine config set package-manager pnpm
 ```
 
@@ -88,6 +94,14 @@ Without `--os` or `--target`, the CLI uses Perry's native host target. Friendly 
 Cross-compilation is available only when the installed Perry and its platform toolchain support the selected target. The CLI does not silently substitute another platform. macOS uses Perry's native macOS target and therefore needs a macOS host. `run` only accepts native executables that match the current host; web and mobile builds are build-only. Web/WASM outputs use Perry's HTML output format.
 
 Build outputs are isolated under `.bornengine/builds/`. Watch-mode output uses `.perry-dev/`, which Perry excludes from its source watcher. Both paths are ignored by the generated project's Git configuration. `clean` removes only files recorded in the CLI manifest; it does not delete dependencies or untracked files.
+
+## Tiled maps and game assets
+
+`import tiled` accepts finite orthogonal TMX maps with CSV or XML tile data, external TSX tilesets and atlas images. It preserves layer transforms and properties, typed string/integer/float/boolean/color/file values, tile GID flip flags, and rectangular object collisions in a `bornengine.world2d` v1 document. Tileset images resolve relative to their TSX file; Tiled file-property paths resolve relative to the map. All referenced files must stay inside the current project root. The importer reports unsupported features with the map or TSX path and does not replace the output if conversion fails.
+
+Isometric or infinite maps, base64/compressed tile data, image-collection tilesets, nested groups, tile objects, non-rectangular collision shapes, and object-reference properties are not imported. Export a finite orthogonal map and use a single atlas tileset image when using this workflow.
+
+`assets validate` and `assets pack` inspect the project's `assets/`, `public/`, and `static/` roots plus assets listed by BornEngine world documents. They reject missing references, unsafe paths, case mismatches, and symlinks that escape the project. Packing preserves project-relative paths, copies exact file bytes, sorts manifest entries, and includes each file's SHA-256 digest and size. `build` and `run` place the pack beside the managed executable; `dev --watch` also asks Perry to watch the asset directories so a changed image or data file restarts the game. `clean` removes the packed files only when they are recorded under a CLI-managed build directory.
 
 ## Troubleshooting
 
