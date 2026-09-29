@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MANIFEST_NAME: &str = "assets.manifest.json";
 const AUDIT_MANIFEST_NAME: &str = "bornengine.assets.json";
+const AUDIT_REPORT_FORMAT: &str = "bornengine.asset_validation";
 const MANIFEST_FORMAT: &str = "bornengine-assets-v1";
 const WORLD_FORMAT: &str = "bornengine.world2d";
 const WORLD_VERSION: u64 = 1;
@@ -50,6 +51,19 @@ pub enum AssetSeverity {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetDiagnosticCode {
+    OrphanAsset,
+    InvalidMediaHeader,
+    ExtensionMismatch,
+    FileSizeLimit,
+    TotalSizeLimit,
+    ImageDimensionLimit,
+    TotalImagePixelsLimit,
+    DeclaredDynamicPathMissing,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct AssetValidationOptions {
     pub orphan_policy: Option<OrphanPolicy>,
@@ -72,7 +86,7 @@ pub struct AssetValidationSettings {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AssetDiagnostic {
-    pub code: String,
+    pub code: AssetDiagnosticCode,
     pub severity: AssetSeverity,
     pub path: String,
     pub message: String,
@@ -82,13 +96,20 @@ pub struct AssetDiagnostic {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AssetValidationReport {
+    pub format: &'static str,
     pub version: u32,
     pub summary: AssetSummary,
     pub diagnostics: Vec<AssetDiagnostic>,
 }
 
 impl AssetValidationReport {
-    pub fn new(summary: AssetSummary, mut diagnostics: Vec<AssetDiagnostic>) -> Self {
+    pub fn new(summary: AssetSummary, mut diagnostics: Vec<AssetDiagnostic>) -> Result<Self> {
+        for diagnostic in &diagnostics {
+            if !diagnostic.path.is_empty() {
+                validate_audit_path(&diagnostic.path, false)
+                    .with_context(|| format!("unsafe diagnostic path `{}`", diagnostic.path))?;
+            }
+        }
         diagnostics.sort_by(|a, b| {
             (
                 &a.path, &a.code, a.severity, &a.message, a.measured, a.limit,
@@ -97,11 +118,12 @@ impl AssetValidationReport {
                     &b.path, &b.code, b.severity, &b.message, b.measured, b.limit,
                 ))
         });
-        Self {
+        Ok(Self {
+            format: AUDIT_REPORT_FORMAT,
             version: 1,
             summary,
             diagnostics,
-        }
+        })
     }
 
     pub fn has_errors(&self) -> bool {
@@ -281,7 +303,7 @@ pub fn validate_project_assets_with_options(
 ) -> Result<AssetValidationReport> {
     let _settings = load_asset_validation_settings(project_root, options)?;
     let summary = validate_project_assets(project_root)?;
-    Ok(AssetValidationReport::new(summary, Vec::new()))
+    AssetValidationReport::new(summary, Vec::new())
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
