@@ -26,9 +26,11 @@ console = "0.16"
 dialoguer = { version = "0.12", default-features = false }
 directories = "6"
 indicatif = "0.18"
+roxmltree = "0.21"
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
 toml = "0.9"
 ureq = { version = "3", features = ["json"] }
 

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="4" height="1" tilewidth="16" tileheight="16" infinite="0">
+ <tileset firstgid="1" source="../tilesets/terrain.tsx"/>
+ <layer id="1" name="Ground" width="4" height="1" opacity="0.75" visible="1" offsetx="2" offsety="3" parallaxx="0.5" parallaxy="1">
+  <data encoding="csv">2147483649,1073741826,536870915,3758096388</data>
+ </layer>
+ <objectgroup id="2" name="Collision">
+  <object id="7" name="Floor" type="collision" x="0" y="16" width="64" height="8" rotation="0">
+   <properties><property name="oneWay" type="bool" value="true"/><property name="friction" type="float" value="0.25"/></properties>
+  </object>
+ </objectgroup>
+</map>

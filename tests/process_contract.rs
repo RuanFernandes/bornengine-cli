@@ -117,8 +117,36 @@ fn check_and_dev_arguments_keep_entry_and_output_separate() {
         perry_dev_args(
             Path::new("main.ts"),
             Path::new(".bornengine/builds/game"),
+            &[],
             false,
         ),
         ["dev", "main.ts", "--output", ".bornengine/builds/game"]
+    );
+}
+
+#[test]
+fn dev_watch_adds_asset_directories_without_changing_existing_arguments() {
+    use std::path::PathBuf;
+
+    assert_eq!(
+        perry_dev_args(
+            Path::new("main.ts"),
+            Path::new(".perry-dev/game"),
+            &[
+                PathBuf::from("/project/assets"),
+                PathBuf::from("/project/audio")
+            ],
+            false,
+        ),
+        [
+            "dev",
+            "main.ts",
+            "--output",
+            ".perry-dev/game",
+            "--watch",
+            "/project/assets",
+            "--watch",
+            "/project/audio"
+        ]
     );
 }

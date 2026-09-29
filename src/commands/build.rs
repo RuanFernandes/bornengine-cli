@@ -1,6 +1,7 @@
 use crate::build_artifacts::{
     begin_build, begin_dev_build, clean_build_artifacts, record_build_files,
 };
+use crate::commands::assets::{pack_project, validate_project_assets};
 use crate::engine::engine_dependency;
 use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
@@ -60,6 +61,7 @@ pub fn build(
     verbose: bool,
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
+    validate_project_assets(&context.project_root)?;
     let output_name = derive_output_name(name, &context.package, &context.entry)?;
     let target_label = target_label(&context.target);
     let extension = context.target.target.output_extension();
@@ -70,8 +72,15 @@ pub fn build(
         extension,
     )?;
     let output = run_perry_compile(&context, &artifact.output, verbose)?;
-    let recorded = record_build_files(&context.project_root, &artifact.directory)?;
     ensure_success("perry compile", &output)?;
+    if !artifact.output.is_file() {
+        bail!(
+            "Perry completed successfully but did not create {}",
+            artifact.output.display()
+        );
+    }
+    pack_project(&context.project_root, &artifact.directory)?;
+    let recorded = record_build_files(&context.project_root, &artifact.directory)?;
     if recorded == 0 {
         bail!("Perry completed successfully without creating any build files");
     }
@@ -101,6 +110,7 @@ pub fn run(
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
     validate_run_target(&context.target, HostPlatform::current())?;
+    validate_project_assets(&context.project_root)?;
     let output_name = derive_output_name(name, &context.package, &context.entry)?;
     let label = target_label(&context.target);
     let artifact = begin_build(
@@ -110,7 +120,6 @@ pub fn run(
         context.target.target.output_extension(),
     )?;
     let output = run_perry_compile(&context, &artifact.output, verbose)?;
-    record_build_files(&context.project_root, &artifact.directory)?;
     ensure_success("perry compile", &output)?;
     if !artifact.output.is_file() {
         bail!(
@@ -121,6 +130,8 @@ pub fn run(
     if verbose {
         print_output(&output);
     }
+    pack_project(&context.project_root, &artifact.directory)?;
+    record_build_files(&context.project_root, &artifact.directory)?;
     println!("{}", ui::paint("Launching game...", Tone::Info));
     let args = program_args.iter().map(OsString::from).collect::<Vec<_>>();
     inherited_command(
@@ -152,13 +163,20 @@ pub fn dev(
             verbose,
         );
     }
+    let assets = validate_project_assets(&context.project_root)?;
     let artifact = begin_dev_build(
         &context.project_root,
         &output_name,
         context.target.target.output_extension(),
     )?;
+    pack_project(&context.project_root, &artifact.directory)?;
     let preexisting_objects = compiler_object_files(&context.project_root)?;
-    let args = perry_dev_args(&context.entry, &artifact.output, verbose);
+    let args = perry_dev_args(
+        &context.entry,
+        &artifact.output,
+        &assets.watch_directories,
+        verbose,
+    );
     let exit_code = inherited_command("perry", &args, Some(&context.project_root), verbose)?;
     move_new_compiler_objects(
         &context.project_root,
