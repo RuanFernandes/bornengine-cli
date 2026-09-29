@@ -161,23 +161,21 @@ fn run_outputs_remain_recorded_when_launching_the_game_fails() {
 fn dev_watches_assets_from_project_root_without_packing_stale_copies() {
     let fixture = CliFixture::new(true);
     let output = fixture.command(&["dev", "main.ts", "--watch"]);
+    let project_root = fs::canonicalize(fixture.project.path()).unwrap();
 
     assert_eq!(output.status.code(), Some(19));
     let log = fs::read_to_string(&fixture.log).unwrap();
     assert!(
-        log.contains(&format!("cwd={}\n", fixture.project.path().display())),
+        log.contains(&format!("cwd={}\n", project_root.display())),
         "{log}"
     );
     assert!(
-        log.contains(&format!(
-            "arg={}\n",
-            fixture.project.path().join("assets").display()
-        )),
+        log.contains(&format!("arg={}\n", project_root.join("assets").display())),
         "{log}"
     );
     assert!(log.contains("arg=--watch\n"), "{log}");
 
-    let dev_root = fixture.project.path().join(".perry-dev");
+    let dev_root = project_root.join(".perry-dev");
     let manifests = find_named_file(&dev_root, "assets.manifest.json");
     assert!(manifests.is_empty(), "stale asset manifests: {manifests:?}");
 

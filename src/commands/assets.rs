@@ -899,6 +899,9 @@ fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
     let mut current = PathBuf::new();
     for component in absolute.components() {
         current.push(component.as_os_str());
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(metadata)
                 if metadata.file_type().is_symlink() && !is_standard_macos_path_alias(&current) =>
