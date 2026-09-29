@@ -64,7 +64,9 @@ fn absent_manifest_preserves_unset_budgets_and_warning_orphans() {
             .unwrap();
     assert_eq!(report.summary.files, 1);
     assert_eq!(report.summary.bytes, 2);
-    assert!(report.diagnostics.is_empty());
+    assert_eq!(report.diagnostics.len(), 1);
+    assert_eq!(report.diagnostics[0].code, AssetDiagnosticCode::OrphanAsset);
+    assert_eq!(report.diagnostics[0].severity, AssetSeverity::Warning);
 }
 
 #[test]
@@ -276,7 +278,198 @@ fn checked_in_audit_fixture_preserves_the_existing_safe_inventory() {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset_audit/complete"
     ));
-    let summary = validate_project_assets(project).unwrap();
+    let summary = validate_project_assets_with_options(project, &AssetValidationOptions::default())
+        .unwrap()
+        .summary;
     assert_eq!(summary.files, 10);
     assert_eq!(summary.bytes, 650);
+}
+
+fn audit_fixture(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/asset_audit")
+        .join(name)
+}
+
+#[test]
+fn audit_fixture_reports_only_unreferenced_non_ignored_assets() {
+    let report = validate_project_assets_with_options(
+        &audit_fixture("complete"),
+        &AssetValidationOptions::default(),
+    )
+    .unwrap();
+    let orphans = report
+        .diagnostics
+        .iter()
+        .filter(|item| item.code == AssetDiagnosticCode::OrphanAsset)
+        .map(|item| (item.path.as_str(), item.severity))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        orphans,
+        [
+            ("assets/large.bin", AssetSeverity::Error),
+            ("assets/malformed.png", AssetSeverity::Error),
+            ("assets/malformed.wav", AssetSeverity::Error),
+            ("assets/mismatch.jpg", AssetSeverity::Error),
+            ("assets/mismatch.mp3", AssetSeverity::Error),
+            ("assets/orphan.wav", AssetSeverity::Error),
+            ("assets/wide.png", AssetSeverity::Error),
+        ]
+    );
+    assert!(!report.diagnostics.iter().any(|item| {
+        [
+            "assets/referenced.png",
+            "assets/dynamic.png",
+            "assets/ignored/skip.png",
+        ]
+        .contains(&item.path.as_str())
+    }));
+    assert!(report.has_errors());
+}
+
+#[test]
+fn audit_fixture_detects_bad_media_and_budget_measurements() {
+    let report = validate_project_assets_with_options(
+        &audit_fixture("complete"),
+        &AssetValidationOptions::default(),
+    )
+    .unwrap();
+    let cases = [
+        (
+            "assets/malformed.png",
+            AssetDiagnosticCode::InvalidMediaHeader,
+            None,
+            None,
+        ),
+        (
+            "assets/malformed.wav",
+            AssetDiagnosticCode::InvalidMediaHeader,
+            None,
+            None,
+        ),
+        (
+            "assets/mismatch.jpg",
+            AssetDiagnosticCode::ExtensionMismatch,
+            None,
+            None,
+        ),
+        (
+            "assets/mismatch.mp3",
+            AssetDiagnosticCode::ExtensionMismatch,
+            None,
+            None,
+        ),
+        (
+            "assets/large.bin",
+            AssetDiagnosticCode::FileSizeLimit,
+            Some(192),
+            Some(128),
+        ),
+        (
+            "assets/wide.png",
+            AssetDiagnosticCode::ImageDimensionLimit,
+            Some(4),
+            Some(2),
+        ),
+        (
+            "",
+            AssetDiagnosticCode::TotalImagePixelsLimit,
+            Some(11),
+            Some(8),
+        ),
+        (
+            "",
+            AssetDiagnosticCode::TotalSizeLimit,
+            Some(581),
+            Some(400),
+        ),
+    ];
+    for (path, code, measured, limit) in cases {
+        assert!(
+            report.diagnostics.iter().any(|item| {
+                item.path == path
+                    && item.code == code
+                    && item.measured == measured
+                    && item.limit == limit
+            }),
+            "missing {code:?} for {path}: {:?}",
+            report.diagnostics
+        );
+    }
+    assert!(
+        !report
+            .diagnostics
+            .iter()
+            .any(|item| item.path == "assets/ignored/skip.png")
+    );
+    assert!(report.diagnostics.windows(2).all(|pair| {
+        (pair[0].path.as_str(), pair[0].code) <= (pair[1].path.as_str(), pair[1].code)
+    }));
+}
+
+#[test]
+fn missing_dynamic_declaration_is_reported_as_error() {
+    let report = validate_project_assets_with_options(
+        &audit_fixture("missing-dynamic"),
+        &AssetValidationOptions::default(),
+    )
+    .unwrap();
+    assert!(report.diagnostics.iter().any(|item| {
+        item.code == AssetDiagnosticCode::DeclaredDynamicPathMissing
+            && item.path == "assets/does-not-exist.png"
+            && item.severity == AssetSeverity::Error
+    }));
+}
+
+#[test]
+fn default_validation_observes_configured_error_severity() {
+    let error = validate_project_assets(&audit_fixture("complete"))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("orphan_asset"), "{error}");
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/unused.png"), b"bad").unwrap();
+    assert!(validate_project_assets(project.path()).is_ok());
+}
+
+#[test]
+fn audit_settings_leave_pack_manifest_and_payload_bytes_unchanged() {
+    let fixture = audit_fixture("complete");
+    let project = tempfile::tempdir().unwrap();
+    let plain_output = tempfile::tempdir().unwrap();
+    let audit_output = tempfile::tempdir().unwrap();
+    let packed_paths = [
+        "assets/dynamic.png",
+        "assets/ignored/skip.png",
+        "assets/large.bin",
+        "assets/malformed.png",
+        "assets/malformed.wav",
+        "assets/mismatch.jpg",
+        "assets/mismatch.mp3",
+        "assets/orphan.wav",
+        "assets/referenced.png",
+        "assets/wide.png",
+    ];
+    for relative in packed_paths
+        .iter()
+        .copied()
+        .chain(["worlds/level.world2d.json"])
+    {
+        let destination = project.path().join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::copy(fixture.join(relative), destination).unwrap();
+    }
+    bornengine_cli::commands::assets::pack_project(project.path(), plain_output.path()).unwrap();
+    bornengine_cli::commands::assets::pack_project(&fixture, audit_output.path()).unwrap();
+    assert_eq!(
+        fs::read(plain_output.path().join("assets.manifest.json")).unwrap(),
+        fs::read(audit_output.path().join("assets.manifest.json")).unwrap()
+    );
+    for relative in packed_paths {
+        assert_eq!(
+            fs::read(plain_output.path().join(relative)).unwrap(),
+            fs::read(audit_output.path().join(relative)).unwrap()
+        );
+    }
 }
