@@ -91,7 +91,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             }
         },
         Commands::Assets { command } => match command {
-            crate::cli::AssetCommands::Validate { project_root } => {
+            crate::cli::AssetCommands::Validate { project_root, .. } => {
                 let root = project_root.unwrap_or(std::env::current_dir()?);
                 let summary = assets::validate_project_assets(&root)?;
                 println!(

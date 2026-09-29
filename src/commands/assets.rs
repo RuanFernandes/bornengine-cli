@@ -10,6 +10,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MANIFEST_NAME: &str = "assets.manifest.json";
+const AUDIT_MANIFEST_NAME: &str = "bornengine.assets.json";
+const AUDIT_REPORT_FORMAT: &str = "bornengine.asset_validation";
 const MANIFEST_FORMAT: &str = "bornengine-assets-v1";
 const WORLD_FORMAT: &str = "bornengine.world2d";
 const WORLD_VERSION: u64 = 1;
@@ -24,11 +26,284 @@ const SKIPPED_DIRECTORIES: [&str; 7] = [
     ".cache",
 ];
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct AssetSummary {
     pub files: usize,
     pub bytes: u64,
+    #[serde(skip)]
     pub watch_directories: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+#[clap(rename_all = "kebab-case")]
+pub enum OrphanPolicy {
+    Ignore,
+    #[default]
+    Warn,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetSeverity {
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetDiagnosticCode {
+    OrphanAsset,
+    InvalidMediaHeader,
+    ExtensionMismatch,
+    FileSizeLimit,
+    TotalSizeLimit,
+    ImageDimensionLimit,
+    TotalImagePixelsLimit,
+    DeclaredDynamicPathMissing,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AssetValidationOptions {
+    pub orphan_policy: Option<OrphanPolicy>,
+    pub max_file_bytes: Option<u64>,
+    pub max_total_bytes: Option<u64>,
+    pub max_image_dimension: Option<u32>,
+    pub max_total_image_pixels: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetValidationSettings {
+    pub dynamic_paths: Vec<String>,
+    pub ignored_paths: Vec<String>,
+    pub orphan_policy: OrphanPolicy,
+    pub max_file_bytes: Option<u64>,
+    pub max_total_bytes: Option<u64>,
+    pub max_image_dimension: Option<u32>,
+    pub max_total_image_pixels: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AssetDiagnostic {
+    pub code: AssetDiagnosticCode,
+    pub severity: AssetSeverity,
+    pub path: String,
+    pub message: String,
+    pub measured: Option<u64>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AssetValidationReport {
+    pub format: &'static str,
+    pub version: u32,
+    pub summary: AssetSummary,
+    pub diagnostics: Vec<AssetDiagnostic>,
+}
+
+impl AssetValidationReport {
+    pub fn new(summary: AssetSummary, mut diagnostics: Vec<AssetDiagnostic>) -> Result<Self> {
+        for diagnostic in &diagnostics {
+            if !diagnostic.path.is_empty() {
+                validate_audit_path(&diagnostic.path, false)
+                    .with_context(|| format!("unsafe diagnostic path `{}`", diagnostic.path))?;
+            }
+        }
+        diagnostics.sort_by(|a, b| {
+            (
+                &a.path, &a.code, a.severity, &a.message, a.measured, a.limit,
+            )
+                .cmp(&(
+                    &b.path, &b.code, b.severity, &b.message, b.measured, b.limit,
+                ))
+        });
+        Ok(Self {
+            format: AUDIT_REPORT_FORMAT,
+            version: 1,
+            summary,
+            diagnostics,
+        })
+    }
+
+    pub fn has_errors(&self) -> bool {
+        self.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == AssetSeverity::Error)
+    }
+}
+
+pub fn load_asset_validation_settings(
+    project_root: &Path,
+    options: &AssetValidationOptions,
+) -> Result<AssetValidationSettings> {
+    let root = canonical_root(project_root)?;
+    let manifest_path = root.join(AUDIT_MANIFEST_NAME);
+    let document = match fs::symlink_metadata(&manifest_path) {
+        Ok(_) => {
+            let canonical = manifest_path
+                .canonicalize()
+                .with_context(|| format!("could not resolve {AUDIT_MANIFEST_NAME}"))?;
+            ensure_inside_root(&root, &canonical, AUDIT_MANIFEST_NAME)?;
+            let bytes = fs::read(&manifest_path)
+                .with_context(|| format!("could not read {AUDIT_MANIFEST_NAME}"))?;
+            Some(
+                serde_json::from_slice::<Value>(&bytes)
+                    .with_context(|| format!("invalid {AUDIT_MANIFEST_NAME}"))?,
+            )
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).with_context(|| format!("could not inspect {AUDIT_MANIFEST_NAME}"));
+        }
+    };
+    let mut settings = AssetValidationSettings {
+        dynamic_paths: Vec::new(),
+        ignored_paths: Vec::new(),
+        orphan_policy: OrphanPolicy::Warn,
+        max_file_bytes: None,
+        max_total_bytes: None,
+        max_image_dimension: None,
+        max_total_image_pixels: None,
+    };
+    if let Some(document) = document {
+        let object = document
+            .as_object()
+            .ok_or_else(|| anyhow!("{AUDIT_MANIFEST_NAME}: expected a JSON object"))?;
+        if object.get("version").and_then(Value::as_u64) != Some(1) {
+            bail!("{AUDIT_MANIFEST_NAME}: unsupported version; expected version 1");
+        }
+        for key in object.keys() {
+            if ![
+                "version",
+                "dynamic_paths",
+                "ignored_paths",
+                "orphan_severity",
+                "max_file_bytes",
+                "max_total_bytes",
+                "max_image_dimension",
+                "max_total_image_pixels",
+            ]
+            .contains(&key.as_str())
+            {
+                bail!("{AUDIT_MANIFEST_NAME}: unsupported field `{key}`");
+            }
+        }
+        settings.dynamic_paths = manifest_paths_field(object, "dynamic_paths", false)?;
+        settings.ignored_paths = manifest_paths_field(object, "ignored_paths", true)?;
+        if let Some(value) = object.get("orphan_severity") {
+            settings.orphan_policy = match value.as_str() {
+                Some("ignore") => OrphanPolicy::Ignore,
+                Some("warning") | Some("warn") => OrphanPolicy::Warn,
+                Some("error") => OrphanPolicy::Error,
+                _ => bail!("{AUDIT_MANIFEST_NAME}: invalid orphan_severity"),
+            };
+        }
+        settings.max_file_bytes = positive_limit(object, "max_file_bytes")?;
+        settings.max_total_bytes = positive_limit(object, "max_total_bytes")?;
+        settings.max_total_image_pixels = positive_limit(object, "max_total_image_pixels")?;
+        settings.max_image_dimension = positive_limit(object, "max_image_dimension")?
+            .map(|value| {
+                u32::try_from(value).map_err(|_| {
+                    anyhow!("{AUDIT_MANIFEST_NAME}: max_image_dimension exceeds u32 range")
+                })
+            })
+            .transpose()?;
+    }
+    if let Some(value) = options.orphan_policy {
+        settings.orphan_policy = value;
+    }
+    if let Some(value) = options.max_file_bytes {
+        settings.max_file_bytes = Some(checked_option_limit(value, "max_file_bytes")?);
+    }
+    if let Some(value) = options.max_total_bytes {
+        settings.max_total_bytes = Some(checked_option_limit(value, "max_total_bytes")?);
+    }
+    if let Some(value) = options.max_image_dimension {
+        settings.max_image_dimension = Some(u32::try_from(checked_option_limit(
+            u64::from(value),
+            "max_image_dimension",
+        )?)?);
+    }
+    if let Some(value) = options.max_total_image_pixels {
+        settings.max_total_image_pixels =
+            Some(checked_option_limit(value, "max_total_image_pixels")?);
+    }
+    Ok(settings)
+}
+
+fn manifest_paths_field(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    globs: bool,
+) -> Result<Vec<String>> {
+    let Some(value) = object.get(key) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| anyhow!("{AUDIT_MANIFEST_NAME}: `{key}` must be an array"))?;
+    let mut paths = BTreeSet::new();
+    for value in values {
+        let path = value
+            .as_str()
+            .ok_or_else(|| anyhow!("{AUDIT_MANIFEST_NAME}: `{key}` entries must be strings"))?;
+        validate_audit_path(path, globs)?;
+        if !paths.insert(path.to_owned()) {
+            bail!("{AUDIT_MANIFEST_NAME}: duplicate `{key}` entry `{path}`");
+        }
+    }
+    Ok(paths.into_iter().collect())
+}
+
+fn validate_audit_path(path: &str, globs: bool) -> Result<()> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path.contains(':')
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+    {
+        bail!("{AUDIT_MANIFEST_NAME}: unsafe project-relative path `{path}`");
+    }
+    for component in path.split('/') {
+        if component.contains(['?', '[', ']', '{', '}'])
+            || (!globs && component.contains('*'))
+            || (globs && component.contains("**") && component != "**")
+        {
+            bail!("{AUDIT_MANIFEST_NAME}: unsupported glob syntax in `{path}`");
+        }
+    }
+    Ok(())
+}
+
+fn positive_limit(object: &serde_json::Map<String, Value>, key: &str) -> Result<Option<u64>> {
+    object
+        .get(key)
+        .map(|value| {
+            let number = value.as_u64().ok_or_else(|| {
+                anyhow!("{AUDIT_MANIFEST_NAME}: `{key}` must be a positive integer")
+            })?;
+            checked_option_limit(number, key)
+        })
+        .transpose()
+}
+
+fn checked_option_limit(value: u64, key: &str) -> Result<u64> {
+    if value == 0 {
+        bail!("{key} must be greater than zero");
+    }
+    Ok(value)
+}
+
+pub fn validate_project_assets_with_options(
+    project_root: &Path,
+    options: &AssetValidationOptions,
+) -> Result<AssetValidationReport> {
+    let _settings = load_asset_validation_settings(project_root, options)?;
+    let summary = validate_project_assets(project_root)?;
+    AssetValidationReport::new(summary, Vec::new())
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

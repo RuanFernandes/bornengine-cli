@@ -27,6 +27,24 @@ fn asset_manifest_is_stable_sorted_and_pack_copies_exact_bytes() {
 }
 
 #[test]
+fn audit_manifest_does_not_change_default_pack_inventory() {
+    let project = tempfile::tempdir().unwrap();
+    fs::create_dir(project.path().join("assets")).unwrap();
+    fs::write(project.path().join("assets/a.bin"), [1, 2, 3]).unwrap();
+    fs::write(
+        project.path().join("bornengine.assets.json"),
+        r#"{"version":1}"#,
+    )
+    .unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let summary = pack_project(project.path(), output.path()).unwrap();
+    let manifest = fs::read_to_string(output.path().join("assets.manifest.json")).unwrap();
+    assert_eq!(summary.files, 1);
+    assert!(manifest.contains("assets/a.bin"));
+    assert!(!manifest.contains("bornengine.assets.json"));
+}
+
+#[test]
 fn repacking_removes_only_stale_files_owned_by_the_previous_manifest() {
     let project = tempfile::tempdir().unwrap();
     fs::create_dir_all(project.path().join("assets")).unwrap();
