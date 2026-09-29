@@ -125,7 +125,7 @@ fn asset_validate_and_pack_commands_accept_project_and_output() {
     let validate = Cli::try_parse_from(["bornengine", "assets", "validate", "game"]).unwrap();
     assert!(matches!(
         validate.command,
-        Commands::Assets { command: bornengine_cli::cli::AssetCommands::Validate { project_root: Some(path) } }
+        Commands::Assets { command: bornengine_cli::cli::AssetCommands::Validate { project_root: Some(path), .. } }
             if path == Path::new("game")
     ));
 
@@ -143,6 +143,55 @@ fn asset_validate_and_pack_commands_accept_project_and_output() {
         Commands::Assets { command: bornengine_cli::cli::AssetCommands::Pack { project_root: Some(root), output } }
             if root == Path::new("game") && output == Path::new("game/.bornengine/assets")
     ));
+}
+
+#[test]
+fn asset_validate_parses_report_flags() {
+    let cli = Cli::try_parse_from([
+        "bornengine",
+        "assets",
+        "validate",
+        "game",
+        "--json",
+        "--orphan-policy",
+        "error",
+        "--max-file-bytes",
+        "10",
+        "--max-total-bytes",
+        "20",
+        "--max-image-dimension",
+        "32",
+        "--max-total-image-pixels",
+        "1024",
+    ])
+    .unwrap();
+    assert!(matches!(
+        cli.command,
+        Commands::Assets {
+            command: bornengine_cli::cli::AssetCommands::Validate {
+                json: true,
+                orphan_policy: Some(bornengine_cli::commands::assets::OrphanPolicy::Error),
+                max_file_bytes: Some(10),
+                max_total_bytes: Some(20),
+                max_image_dimension: Some(32),
+                max_total_image_pixels: Some(1024),
+                ..
+            }
+        }
+    ));
+}
+
+#[test]
+fn asset_validate_rejects_zero_limits() {
+    for flag in [
+        "--max-file-bytes",
+        "--max-total-bytes",
+        "--max-image-dimension",
+        "--max-total-image-pixels",
+    ] {
+        let result = Cli::try_parse_from(["bornengine", "assets", "validate", flag, "0"]);
+        assert!(result.is_err(), "{flag} accepted zero");
+    }
 }
 
 #[test]

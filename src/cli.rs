@@ -195,6 +195,18 @@ pub enum AssetCommands {
     Validate {
         #[arg(help = "Project root (defaults to the current directory)")]
         project_root: Option<PathBuf>,
+        #[arg(long, help = "Write a versioned JSON validation report")]
+        json: bool,
+        #[arg(long, value_enum, help = "How to report unreferenced assets")]
+        orphan_policy: Option<crate::commands::assets::OrphanPolicy>,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..), help = "Maximum bytes in one asset")]
+        max_file_bytes: Option<u64>,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..), help = "Maximum combined asset bytes")]
+        max_total_bytes: Option<u64>,
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..), help = "Maximum width or height of an image")]
+        max_image_dimension: Option<u32>,
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..), help = "Maximum combined image pixels")]
+        max_total_image_pixels: Option<u64>,
     },
     /// Copy project assets and write a deterministic manifest.
     Pack {

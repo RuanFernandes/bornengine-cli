@@ -91,14 +91,44 @@ pub fn execute(cli: Cli) -> Result<i32> {
             }
         },
         Commands::Assets { command } => match command {
-            crate::cli::AssetCommands::Validate { project_root } => {
+            crate::cli::AssetCommands::Validate {
+                project_root,
+                json,
+                orphan_policy,
+                max_file_bytes,
+                max_total_bytes,
+                max_image_dimension,
+                max_total_image_pixels,
+            } => {
                 let root = project_root.unwrap_or(std::env::current_dir()?);
-                let summary = assets::validate_project_assets(&root)?;
-                println!(
-                    "Validated {} project assets ({} bytes)",
-                    summary.files, summary.bytes
-                );
-                Ok(0)
+                let options = assets::AssetValidationOptions {
+                    orphan_policy,
+                    max_file_bytes,
+                    max_total_bytes,
+                    max_image_dimension,
+                    max_total_image_pixels,
+                };
+                let report = assets::validate_project_assets_with_options(&root, &options)?;
+                if json {
+                    println!("{}", serde_json::to_string(&report)?);
+                } else {
+                    for diagnostic in &report.diagnostics {
+                        let severity = serde_json::to_value(diagnostic.severity)?;
+                        let code = serde_json::to_value(diagnostic.code)?;
+                        eprintln!(
+                            "{} {} {}: {}",
+                            severity.as_str().unwrap_or("error"),
+                            code.as_str().unwrap_or("unknown"),
+                            diagnostic.path,
+                            diagnostic.message
+                        );
+                    }
+                    println!(
+                        "Validated {} project assets ({} bytes)",
+                        report.summary.files, report.summary.bytes
+                    );
+                }
+                Ok(i32::from(report.has_errors()))
             }
             crate::cli::AssetCommands::Pack {
                 project_root,

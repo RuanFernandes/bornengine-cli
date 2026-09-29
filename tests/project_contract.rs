@@ -29,8 +29,11 @@ fn creates_small_game_project_with_pinned_engine_and_perry_allowlist() {
         serde_json::json!(["@bloomengine/engine/*"])
     );
     let starter = fs::read_to_string(project.join("main.ts")).unwrap();
-    assert!(starter.contains("@bloomengine/engine/core"));
-    assert!(starter.contains("@bloomengine/engine/shapes"));
+    assert!(starter.contains("from \"@bloomengine/engine\""));
+    assert!(starter.contains("extends Game"));
+    assert!(starter.contains("override onStart()"));
+    assert!(starter.contains("override loop(deltaTime: number)"));
+    assert!(starter.contains("override render()"));
 }
 
 #[test]
@@ -59,7 +62,7 @@ fn local_engine_spec_is_kept_in_package_json_and_allowlist() {
     assert!(
         fs::read_to_string(project.join("main.ts"))
             .unwrap()
-            .contains("@bornengine/engine/core")
+            .contains("from \"@bornengine/engine\"")
     );
 }
 
