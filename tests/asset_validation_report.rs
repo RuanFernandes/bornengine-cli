@@ -277,6 +277,6 @@ fn checked_in_audit_fixture_preserves_the_existing_safe_inventory() {
         "/tests/fixtures/asset_audit/complete"
     ));
     let summary = validate_project_assets(project).unwrap();
-    assert_eq!(summary.files, 8);
-    assert_eq!(summary.bytes, 591);
+    assert_eq!(summary.files, 10);
+    assert_eq!(summary.bytes, 650);
 }
