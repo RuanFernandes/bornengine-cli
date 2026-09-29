@@ -143,6 +143,8 @@ Diagnostics are sorted by path, code, severity, message, measured value, and lim
 
 `assets pack` continues to copy the same deterministic file inventory and write a `bornengine-assets-v1` manifest. Audit warnings do not change the default pack output. Build and run still fail on hard validation errors or configured error diagnostics before packing.
 
+For the browsable command reference and configuration guide, see [Asset audit in the BornEngine documentation](https://ruanfernandes.github.io/BornEngine/docs/cli/assets/).
+
 ## Troubleshooting
 
 - **Perry not found:** install Perry and make sure `perry` is on `PATH`, then run `bornengine doctor`.
