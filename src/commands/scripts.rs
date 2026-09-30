@@ -21,6 +21,8 @@ const MANIFEST_NAME: &str = "bornengine.script.json";
 const MANIFEST_FORMAT: &str = "bornengine-script-v1";
 const API_VERSION: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
+const MAX_METADATA_BYTES: u64 = 64 * 1024;
+const MAX_SOURCE_NESTING: usize = 128;
 const OWNERSHIP_NAME: &str = ".bornengine-pack.json";
 const ALLOWED_PERMISSIONS: [&str; 4] = [
     "log",
@@ -176,8 +178,7 @@ fn read_package(manifest_path: Option<&Path>) -> Result<ScriptPackage> {
         .parent()
         .context("script manifest has no package directory")?
         .to_path_buf();
-    let bytes = fs::read(&manifest_path)
-        .with_context(|| format!("could not read script manifest {}", manifest_path.display()))?;
+    let bytes = read_bounded_metadata(&manifest_path, "script manifest")?;
     let manifest: ScriptPackageManifest = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid script manifest {}", manifest_path.display()))?;
     validate_manifest(&manifest)?;
@@ -211,6 +212,7 @@ fn read_bounded_entry(path: &Path, entry: &str) -> Result<Vec<u8>> {
 
 fn validate_source(bytes: &[u8]) -> Result<()> {
     let source = std::str::from_utf8(bytes).context("script entry must be UTF-8")?;
+    validate_source_nesting(source)?;
     let mut parser = Parser::new(Source::from_bytes(source));
     let mut interner = Interner::default();
     let module = parser
@@ -239,6 +241,119 @@ fn validate_source(bytes: &[u8]) -> Result<()> {
         bail!("script entry uses dynamic import, but v1 has no module loader");
     }
     Ok(())
+}
+
+// Boa's parser and AST visitor recurse through nested expressions. Keep that
+// recursion bounded before either operates on an untrusted source file.
+fn validate_source_nesting(source: &str) -> Result<()> {
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code,
+        Single,
+        Double,
+        Template,
+        LineComment,
+        BlockComment,
+    }
+    let bytes = source.as_bytes();
+    let mut mode = Mode::Code;
+    let mut delimiters = Vec::new();
+    let mut index = 0;
+    let mut unary_run = 0;
+    while index < bytes.len() {
+        let current = bytes[index];
+        let next = bytes.get(index + 1).copied();
+        match mode {
+            Mode::Code => match (current, next) {
+                (b'/', Some(b'/')) => {
+                    mode = Mode::LineComment;
+                    index += 1;
+                }
+                (b'/', Some(b'*')) => {
+                    mode = Mode::BlockComment;
+                    index += 1;
+                }
+                (b'\'', _) => mode = Mode::Single,
+                (b'"', _) => mode = Mode::Double,
+                (b'`', _) => mode = Mode::Template,
+                (b'(' | b'[' | b'{', _) => {
+                    delimiters.push(current);
+                    if delimiters.len() > MAX_SOURCE_NESTING {
+                        bail!(
+                            "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
+                        );
+                    }
+                    unary_run = 0;
+                }
+                (b')' | b']' | b'}', _) => {
+                    if let Some(open) = delimiters.pop() {
+                        if open == b'$' && current == b'}' {
+                            mode = Mode::Template;
+                        }
+                    }
+                    unary_run = 0;
+                }
+                (b'!' | b'~', _) => {
+                    unary_run += 1;
+                    if unary_run > MAX_SOURCE_NESTING {
+                        bail!(
+                            "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
+                        );
+                    }
+                }
+                (b' ' | b'\t' | b'\r' | b'\n', _) => {}
+                _ => unary_run = 0,
+            },
+            Mode::Single | Mode::Double | Mode::Template => {
+                if current == b'\\' {
+                    index += 1;
+                } else if matches!(mode, Mode::Single) && current == b'\''
+                    || matches!(mode, Mode::Double) && current == b'"'
+                    || matches!(mode, Mode::Template) && current == b'`'
+                {
+                    mode = Mode::Code;
+                } else if matches!(mode, Mode::Template) && current == b'$' && next == Some(b'{') {
+                    delimiters.push(b'$');
+                    if delimiters.len() > MAX_SOURCE_NESTING {
+                        bail!(
+                            "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
+                        );
+                    }
+                    mode = Mode::Code;
+                    index += 1;
+                }
+            }
+            Mode::LineComment => {
+                if current == b'\n' {
+                    mode = Mode::Code;
+                }
+            }
+            Mode::BlockComment => {
+                if current == b'*' && next == Some(b'/') {
+                    mode = Mode::Code;
+                    index += 1;
+                }
+            }
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn read_bounded_metadata(path: &Path, description: &str) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .with_context(|| format!("could not read {description} {}", path.display()))?
+        .take(MAX_METADATA_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("could not read {description} {}", path.display()))?;
+    if bytes.len() as u64 > MAX_METADATA_BYTES {
+        bail!(
+            "{description} {} exceeds the 65536 byte metadata limit",
+            path.display()
+        );
+    }
+    Ok(bytes)
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -356,8 +471,11 @@ fn validate_previous_pack(output: &Path) -> Result<()> {
     if !marker_metadata.is_file() || marker_metadata.file_type().is_symlink() {
         bail!("existing script output ownership marker is not a regular file");
     }
-    let marker: PackOwnership = serde_json::from_slice(&fs::read(&marker_path)?)
-        .context("existing script output ownership marker is invalid")?;
+    let marker: PackOwnership = serde_json::from_slice(&read_bounded_metadata(
+        &marker_path,
+        "script ownership marker",
+    )?)
+    .context("existing script output ownership marker is invalid")?;
     if marker.format != "bornengine-cli-script-pack-v1" {
         bail!("existing script output ownership marker has an unknown format");
     }
@@ -373,8 +491,7 @@ fn validate_previous_pack(output: &Path) -> Result<()> {
             return Err(error).context("could not inspect existing script output manifest");
         }
     };
-    let bytes =
-        fs::read(&manifest_path).context("could not read existing script output manifest")?;
+    let bytes = read_bounded_metadata(&manifest_path, "existing script output manifest")?;
     if marker.manifest_sha256 != sha256(&bytes) {
         bail!("refusing to replace modified script output manifest");
     }

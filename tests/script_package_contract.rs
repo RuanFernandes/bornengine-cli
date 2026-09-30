@@ -314,6 +314,87 @@ fn script_check_rejects_invalid_utf8_and_oversized_source() {
 }
 
 #[test]
+fn script_check_and_pack_reject_deep_parentheses_without_a_signal() {
+    let package = tempfile::tempdir().unwrap();
+    let source = format!(
+        "export default {}{}{};",
+        "(".repeat(1000),
+        "{}",
+        ")".repeat(1000)
+    );
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", source.as_bytes())),
+    );
+    let output = package.path().join("dist");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+    for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+        assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+        assert!(
+            output_text(&result).contains("nesting"),
+            "{}",
+            output_text(&result)
+        );
+    }
+    assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+}
+
+#[test]
+fn script_check_and_pack_reject_oversized_manifest_without_changing_output() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        &format!("{}{}", VALID_MANIFEST, " ".repeat(64 * 1024)),
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let output = package.path().join("dist");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("keep.txt"), b"keep").unwrap();
+    let before = snapshot(&output);
+
+    for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+        assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+        assert!(
+            output_text(&result).contains("65536"),
+            "{}",
+            output_text(&result)
+        );
+    }
+    assert_eq!(snapshot(&output), before);
+}
+
+#[test]
+fn script_pack_rejects_oversized_previous_manifest_and_marker_without_changing_output() {
+    for name in ["bornengine.script.json", ".bornengine-pack.json"] {
+        let package = tempfile::tempdir().unwrap();
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", b"export default {};")),
+        );
+        let output = package.path().join("dist");
+        assert!(run_pack(&manifest, &output).status.success());
+        let metadata_path = output.join(name);
+        let mut metadata = fs::read(&metadata_path).unwrap();
+        metadata.extend(vec![b' '; 64 * 1024]);
+        fs::write(&metadata_path, metadata).unwrap();
+        let before = snapshot(&output);
+
+        let result = run_pack(&manifest, &output);
+        assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+        assert!(
+            output_text(&result).contains("65536"),
+            "{}",
+            output_text(&result)
+        );
+        assert_eq!(snapshot(&output), before);
+    }
+}
+
+#[test]
 fn script_pack_refuses_independently_authored_package() {
     let package = tempfile::tempdir().unwrap();
     let manifest = write_package(
