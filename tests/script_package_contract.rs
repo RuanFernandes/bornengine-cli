@@ -343,6 +343,235 @@ fn script_check_and_pack_reject_deep_parentheses_without_a_signal() {
 }
 
 #[test]
+fn script_check_and_pack_reject_recursive_unary_chains_without_a_signal() {
+    for prefix in [
+        "- ".repeat(100_000),
+        "+ ".repeat(2_000),
+        "delete ".repeat(2_000),
+        "void ".repeat(2_000),
+        "typeof ".repeat(2_000),
+    ] {
+        let package = tempfile::tempdir().unwrap();
+        let source = format!("export default {{ update() {{ return {prefix}1; }} }};");
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", source.as_bytes())),
+        );
+        let output = package.path().join("dist");
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+        for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+            assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+            assert!(
+                output_text(&result).contains("complexity"),
+                "{}",
+                output_text(&result)
+            );
+        }
+        assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+    }
+}
+
+#[test]
+fn script_check_rejects_unary_chains_with_unicode_whitespace_without_a_signal() {
+    for space in ["\u{00a0}", "\u{2003}", "\u{feff}"] {
+        let package = tempfile::tempdir().unwrap();
+        let source = format!(
+            "export default {{ update() {{ return {}1; }} }};",
+            format!("typeof{space}").repeat(2_000)
+        );
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", source.as_bytes())),
+        );
+        let result = run_check(&manifest);
+        assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+        assert!(
+            output_text(&result).contains("complexity"),
+            "{}",
+            output_text(&result)
+        );
+    }
+}
+
+#[test]
+fn script_check_and_pack_reject_nesting_after_every_js_line_ending() {
+    for ending in ["\n", "\r", "\r\n", "\u{2028}", "\u{2029}"] {
+        let package = tempfile::tempdir().unwrap();
+        let source = format!(
+            "export default {{ update() {{ return // comment{ending}{}1{}; }} }};",
+            "(".repeat(1_000),
+            ")".repeat(1_000),
+        );
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", source.as_bytes())),
+        );
+        let output = package.path().join("dist");
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+        for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+            assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+            assert!(
+                output_text(&result).contains("nesting"),
+                "{}",
+                output_text(&result)
+            );
+        }
+        assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+    }
+}
+
+#[test]
+fn script_check_and_pack_reject_nesting_after_postfix_division() {
+    for postfix in ["++", "--"] {
+        let package = tempfile::tempdir().unwrap();
+        let source = format!(
+            "export default {{ update() {{ let a = 1; return a{postfix} / {}1{} / 1; }} }};",
+            "(".repeat(1_000),
+            ")".repeat(1_000),
+        );
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", source.as_bytes())),
+        );
+        let output = package.path().join("dist");
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+        for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+            assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+            assert!(
+                output_text(&result).contains("nesting"),
+                "{}",
+                output_text(&result)
+            );
+        }
+        assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+    }
+}
+
+#[test]
+fn script_check_accepts_literals_comments_and_template_interpolation() {
+    let package = tempfile::tempdir().unwrap();
+    let punctuation = "!".repeat(1_000);
+    let grouping = "(".repeat(1_000);
+    let source = format!(
+        "export default {{ update() {{ const re = /{punctuation}/; const classRe = /[(!)]{punctuation}/; \
+         const single = '{grouping}'; const double = \"{punctuation}\"; \
+         const template = `{grouping} ${{ 1 + 2 }} {punctuation}`; \
+         if (true) /{punctuation}/.test(single); \
+         // {punctuation}{grouping}\r\nreturn re.test(single) && classRe.test(single) && double && template; }} }};"
+    );
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", source.as_bytes())),
+    );
+    let checked = run_check(&manifest);
+    assert_eq!(checked.status.code(), Some(0), "{}", output_text(&checked));
+    let packed = run_pack(&manifest, &package.path().join("dist"));
+    assert_eq!(packed.status.code(), Some(0), "{}", output_text(&packed));
+
+    for ending in ["\n", "\r", "\r\n", "\u{2028}", "\u{2029}"] {
+        let source = format!("export default {{ update() {{ // note{ending}return 1; }} }};");
+        fs::write(package.path().join("scripts/actor.js"), source).unwrap();
+        let checked = run_check(&manifest);
+        assert_eq!(checked.status.code(), Some(0), "{}", output_text(&checked));
+    }
+}
+
+#[test]
+fn script_check_accepts_flat_collections_and_semicolon_free_declarations() {
+    let package = tempfile::tempdir().unwrap();
+    let array = (0..1_000).map(|_| "1").collect::<Vec<_>>().join(",");
+    let object = (0..1_000)
+        .map(|index| format!("p{index}:1"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let declarations = (0..300)
+        .map(|index| format!("const item{index} = {index}\n"))
+        .collect::<String>();
+    let source = format!(
+        "{declarations}export default {{ update() {{ const list = [{array}]; const map = {{{object}}}; return list[0] + map.p0; }} }};"
+    );
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", source.as_bytes())),
+    );
+
+    let checked = run_check(&manifest);
+    assert_eq!(checked.status.code(), Some(0), "{}", output_text(&checked));
+    let packed = run_pack(&manifest, &package.path().join("dist"));
+    assert_eq!(packed.status.code(), Some(0), "{}", output_text(&packed));
+}
+
+#[test]
+fn script_check_and_pack_reject_recursive_expression_chains_without_a_signal() {
+    let shapes = [
+        format!("return {}1;", "1+".repeat(300)),
+        format!("return {}1;", "a=".repeat(300)),
+        format!("return {}0;", "0?1:".repeat(300)),
+        format!("return {}1;", "()=>".repeat(300)),
+        format!("return f{};", "()".repeat(300)),
+        format!("return a{};", ".x".repeat(300)),
+        format!("return ({}1);", "1,".repeat(300)),
+        format!("{}return 1;", "if(true) ".repeat(300)),
+    ];
+    for body in shapes {
+        let package = tempfile::tempdir().unwrap();
+        let source = format!("export default {{ update() {{ {body} }} }};");
+        let manifest = write_package(
+            package.path(),
+            VALID_MANIFEST,
+            Some(("scripts/actor.js", source.as_bytes())),
+        );
+        let output = package.path().join("dist");
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+        for result in [run_check(&manifest), run_pack(&manifest, &output)] {
+            assert_eq!(result.status.code(), Some(1), "{}", output_text(&result));
+            assert!(
+                output_text(&result).contains("complexity"),
+                "{}",
+                output_text(&result)
+            );
+        }
+        assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+    }
+}
+
+#[test]
+fn script_check_rejects_operator_chain_of_function_expressions() {
+    let package = tempfile::tempdir().unwrap();
+    let source = format!(
+        "export default {{ update() {{ return 0 {} + 1; }} }};",
+        "+ function(){} ".repeat(300)
+    );
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", source.as_bytes())),
+    );
+
+    let checked = run_check(&manifest);
+    assert_eq!(checked.status.code(), Some(1), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("complexity"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[test]
 fn script_check_and_pack_reject_oversized_manifest_without_changing_output() {
     let package = tempfile::tempdir().unwrap();
     let manifest = write_package(

@@ -23,6 +23,7 @@ const API_VERSION: u32 = 1;
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 const MAX_METADATA_BYTES: u64 = 64 * 1024;
 const MAX_SOURCE_NESTING: usize = 128;
+const MAX_SOURCE_RECURSIVE_STEPS: usize = 128;
 const OWNERSHIP_NAME: &str = ".bornengine-pack.json";
 const ALLOWED_PERMISSIONS: [&str; 4] = [
     "log",
@@ -243,8 +244,9 @@ fn validate_source(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-// Boa's parser and AST visitor recurse through nested expressions. Keep that
-// recursion bounded before either operates on an untrusted source file.
+// Boa's parser and AST visitor recurse through nested expressions. Bound
+// delimiter depth and recursive expression chains before either phase sees
+// untrusted source. Boa still supplies the authoritative syntax checks.
 fn validate_source_nesting(source: &str) -> Result<()> {
     #[derive(Clone, Copy)]
     enum Mode {
@@ -252,58 +254,255 @@ fn validate_source_nesting(source: &str) -> Result<()> {
         Single,
         Double,
         Template,
+        Regex,
+        RegexClass,
         LineComment,
         BlockComment,
+    }
+    struct Delimiter {
+        kind: u8,
+        outer_chain: usize,
     }
     let bytes = source.as_bytes();
     let mut mode = Mode::Code;
     let mut delimiters = Vec::new();
     let mut index = 0;
-    let mut unary_run = 0;
+    let mut recursive_chain = 0;
+    let mut expect_operand = true;
+    let mut pending_condition = false;
+    let mut member_dot = false;
+    let mut can_start_object = false;
     while index < bytes.len() {
         let current = bytes[index];
         let next = bytes.get(index + 1).copied();
+        if matches!(mode, Mode::Code | Mode::LineComment) {
+            let width = js_line_terminator_width(bytes, index);
+            if width != 0 {
+                if matches!(mode, Mode::LineComment) {
+                    mode = Mode::Code;
+                }
+                index += width;
+                continue;
+            }
+        }
+        if matches!(mode, Mode::Code) {
+            let character = source[index..].chars().next().unwrap();
+            if js_whitespace(character) {
+                index += character.len_utf8();
+                continue;
+            }
+        }
         match mode {
-            Mode::Code => match (current, next) {
-                (b'/', Some(b'/')) => {
-                    mode = Mode::LineComment;
-                    index += 1;
-                }
-                (b'/', Some(b'*')) => {
-                    mode = Mode::BlockComment;
-                    index += 1;
-                }
-                (b'\'', _) => mode = Mode::Single,
-                (b'"', _) => mode = Mode::Double,
-                (b'`', _) => mode = Mode::Template,
-                (b'(' | b'[' | b'{', _) => {
-                    delimiters.push(current);
-                    if delimiters.len() > MAX_SOURCE_NESTING {
-                        bail!(
-                            "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
-                        );
+            Mode::Code => {
+                let condition_start = pending_condition;
+                let property_name = member_dot;
+                pending_condition = false;
+                member_dot = false;
+                match (current, next) {
+                    (b'/', Some(b'/')) => {
+                        mode = Mode::LineComment;
+                        pending_condition = condition_start;
+                        member_dot = property_name;
+                        index += 1;
                     }
-                    unary_run = 0;
-                }
-                (b')' | b']' | b'}', _) => {
-                    if let Some(open) = delimiters.pop() {
+                    (b'/', Some(b'*')) => {
+                        mode = Mode::BlockComment;
+                        pending_condition = condition_start;
+                        member_dot = property_name;
+                        index += 1;
+                    }
+                    (b'/', _) if expect_operand => {
+                        mode = Mode::Regex;
+                    }
+                    (b'\'', _) => {
+                        mode = Mode::Single;
+                        can_start_object = false;
+                    }
+                    (b'"', _) => {
+                        mode = Mode::Double;
+                        can_start_object = false;
+                    }
+                    (b'`', _) => {
+                        mode = Mode::Template;
+                        can_start_object = false;
+                    }
+                    (b'(' | b'[' | b'{', _) => {
+                        if !expect_operand && matches!(current, b'(' | b'[') && !condition_start {
+                            count_recursive_step(&mut recursive_chain)?;
+                        }
+                        let kind = match current {
+                            b'(' if condition_start => b'c',
+                            b'(' if !expect_operand => b'a',
+                            b'[' if !expect_operand => b'i',
+                            b'{' if can_start_object => b'o',
+                            _ => current,
+                        };
+                        delimiters.push(Delimiter {
+                            kind,
+                            outer_chain: recursive_chain,
+                        });
+                        if delimiters.len() > MAX_SOURCE_NESTING {
+                            bail!(
+                                "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
+                            );
+                        }
+                        expect_operand = true;
+                        can_start_object = matches!(current, b'(' | b'[');
+                    }
+                    (b')' | b']' | b'}', _) => {
+                        let Some(delimiter) = delimiters.pop() else {
+                            bail!("script entry has invalid delimiter nesting");
+                        };
+                        let open = delimiter.kind;
                         if open == b'$' && current == b'}' {
                             mode = Mode::Template;
+                        } else if !matches!(
+                            (open, current),
+                            (b'(', b')')
+                                | (b'a', b')')
+                                | (b'c', b')')
+                                | (b'[', b']')
+                                | (b'i', b']')
+                                | (b'{', b'}')
+                                | (b'o', b'}')
+                        ) {
+                            bail!("script entry has invalid delimiter nesting");
                         }
+                        recursive_chain = delimiter.outer_chain;
+                        expect_operand = open == b'c';
+                        can_start_object = false;
                     }
-                    unary_run = 0;
-                }
-                (b'!' | b'~', _) => {
-                    unary_run += 1;
-                    if unary_run > MAX_SOURCE_NESTING {
-                        bail!(
-                            "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
+                    (b';', _) => {
+                        recursive_chain = 0;
+                        expect_operand = true;
+                        can_start_object = false;
+                    }
+                    (b' ' | b'\t' | b'\x0b' | b'\x0c', _) => {
+                        pending_condition = condition_start;
+                        member_dot = property_name;
+                    }
+                    (c, _) if c.is_ascii_alphabetic() || c == b'_' || c == b'$' || c >= 0x80 => {
+                        let start = index;
+                        let end = source_token_end(source, start, false);
+                        index = end - 1;
+                        let word = &source[start..end];
+                        if !property_name {
+                            if matches!(word, "const" | "let" | "var" | "export") {
+                                recursive_chain = 0;
+                            } else if matches!(
+                                word,
+                                "delete"
+                                    | "void"
+                                    | "typeof"
+                                    | "new"
+                                    | "await"
+                                    | "yield"
+                                    | "in"
+                                    | "instanceof"
+                                    | "of"
+                                    | "if"
+                                    | "while"
+                                    | "for"
+                                    | "with"
+                                    | "switch"
+                                    | "catch"
+                                    | "else"
+                                    | "do"
+                            ) {
+                                count_recursive_step(&mut recursive_chain)?;
+                            }
+                        }
+                        expect_operand = !property_name
+                            && matches!(
+                                word,
+                                "return"
+                                    | "throw"
+                                    | "case"
+                                    | "delete"
+                                    | "void"
+                                    | "typeof"
+                                    | "new"
+                                    | "await"
+                                    | "yield"
+                                    | "default"
+                                    | "in"
+                                    | "of"
+                                    | "instanceof"
+                            );
+                        pending_condition = !property_name
+                            && matches!(word, "if" | "while" | "for" | "with" | "switch" | "catch");
+                        can_start_object = !property_name
+                            && matches!(
+                                word,
+                                "return" | "throw" | "case" | "default" | "yield" | "await"
+                            );
+                    }
+                    (c, _) if c.is_ascii_digit() => {
+                        index = source_token_end(source, index, true) - 1;
+                        expect_operand = false;
+                        can_start_object = false;
+                    }
+                    (b'+' | b'-', Some(other)) if current == other => {
+                        count_recursive_step(&mut recursive_chain)?;
+                        index += 1;
+                    }
+                    (b',', _) => {
+                        if delimiters
+                            .last()
+                            .is_some_and(|delimiter| matches!(delimiter.kind, b'[' | b'o' | b'a'))
+                        {
+                            recursive_chain = delimiters.last().unwrap().outer_chain;
+                        } else {
+                            count_recursive_step(&mut recursive_chain)?;
+                        }
+                        expect_operand = true;
+                        can_start_object = true;
+                    }
+                    _ => {
+                        if matches!(
+                            current,
+                            b'/' | b'='
+                                | b'+'
+                                | b'-'
+                                | b'*'
+                                | b'!'
+                                | b'~'
+                                | b'%'
+                                | b'^'
+                                | b'&'
+                                | b'|'
+                                | b'<'
+                                | b'>'
+                                | b'?'
+                                | b'.'
+                        ) {
+                            count_recursive_step(&mut recursive_chain)?;
+                        }
+                        member_dot = current == b'.';
+                        expect_operand = matches!(
+                            current,
+                            b'/' | b'='
+                                | b'+'
+                                | b'-'
+                                | b'*'
+                                | b'!'
+                                | b'~'
+                                | b'%'
+                                | b'^'
+                                | b'&'
+                                | b'|'
+                                | b'<'
+                                | b'>'
+                                | b'?'
+                                | b':'
+                        );
+                        can_start_object = matches!(
+                            current,
+                            b'=' | b'+' | b'-' | b'*' | b'/' | b'?' | b':' | b'&' | b'|'
                         );
                     }
                 }
-                (b' ' | b'\t' | b'\r' | b'\n', _) => {}
-                _ => unary_run = 0,
-            },
+            }
             Mode::Single | Mode::Double | Mode::Template => {
                 if current == b'\\' {
                     index += 1;
@@ -313,21 +512,43 @@ fn validate_source_nesting(source: &str) -> Result<()> {
                 {
                     mode = Mode::Code;
                 } else if matches!(mode, Mode::Template) && current == b'$' && next == Some(b'{') {
-                    delimiters.push(b'$');
+                    delimiters.push(Delimiter {
+                        kind: b'$',
+                        outer_chain: recursive_chain,
+                    });
                     if delimiters.len() > MAX_SOURCE_NESTING {
                         bail!(
                             "script entry exceeds the {MAX_SOURCE_NESTING} level syntax nesting limit"
                         );
                     }
                     mode = Mode::Code;
+                    expect_operand = true;
+                    can_start_object = true;
                     index += 1;
                 }
             }
-            Mode::LineComment => {
-                if current == b'\n' {
+            Mode::Regex => {
+                if current == b'\\' {
+                    index += 1;
+                } else if current == b'[' {
+                    mode = Mode::RegexClass;
+                } else if current == b'/' {
                     mode = Mode::Code;
+                    expect_operand = false;
+                    can_start_object = false;
+                    while index + 1 < bytes.len() && bytes[index + 1].is_ascii_alphabetic() {
+                        index += 1;
+                    }
                 }
             }
+            Mode::RegexClass => {
+                if current == b'\\' {
+                    index += 1;
+                } else if current == b']' {
+                    mode = Mode::Regex;
+                }
+            }
+            Mode::LineComment => {}
             Mode::BlockComment => {
                 if current == b'*' && next == Some(b'/') {
                     mode = Mode::Code;
@@ -338,6 +559,49 @@ fn validate_source_nesting(source: &str) -> Result<()> {
         index += 1;
     }
     Ok(())
+}
+
+fn count_recursive_step(count: &mut usize) -> Result<()> {
+    *count += 1;
+    if *count > MAX_SOURCE_RECURSIVE_STEPS {
+        bail!(
+            "script entry exceeds the {MAX_SOURCE_RECURSIVE_STEPS} step recursive syntax complexity limit"
+        );
+    }
+    Ok(())
+}
+
+fn source_token_end(source: &str, start: usize, allow_dot: bool) -> usize {
+    let mut end = start;
+    for (offset, character) in source[start..].char_indices() {
+        if offset != 0
+            && !character.is_alphanumeric()
+            && character != '_'
+            && character != '$'
+            && !(allow_dot && character == '.')
+            && (character.is_ascii() || js_whitespace(character))
+        {
+            break;
+        }
+        end = start + offset + character.len_utf8();
+    }
+    end
+}
+
+fn js_whitespace(character: char) -> bool {
+    character.is_whitespace() || character == '\u{feff}'
+}
+
+fn js_line_terminator_width(bytes: &[u8], index: usize) -> usize {
+    match bytes[index] {
+        b'\r' | b'\n' => 1,
+        0xe2 if bytes[index..].starts_with(&[0xe2, 0x80, 0xa8])
+            || bytes[index..].starts_with(&[0xe2, 0x80, 0xa9]) =>
+        {
+            3
+        }
+        _ => 0,
+    }
 }
 
 fn read_bounded_metadata(path: &Path, description: &str) -> Result<Vec<u8>> {
