@@ -166,12 +166,21 @@ fn script_pack_contains_only_the_declared_entry() {
 
     let result = run_pack(&manifest, &output);
     assert!(result.status.success(), "{}", output_text(&result));
+    assert!(
+        output_text(&result).contains("Packed 3 script package files"),
+        "{}",
+        output_text(&result)
+    );
     assert_eq!(
         snapshot(&output)
             .iter()
             .map(|item| item.0.as_str())
             .collect::<Vec<_>>(),
-        ["bornengine.script.json", "scripts/actor.js"]
+        [
+            ".bornengine-pack.json",
+            "bornengine.script.json",
+            "scripts/actor.js"
+        ]
     );
     assert_eq!(
         fs::read(output.join("scripts/actor.js")).unwrap(),
@@ -195,4 +204,185 @@ fn script_pack_is_deterministic() {
     let second = run_pack(&manifest, &output);
     assert!(second.status.success(), "{}", output_text(&second));
     assert_eq!(snapshot(&output), first_snapshot);
+}
+
+#[test]
+fn script_check_rejects_invalid_javascript_and_pack_preserves_output() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default { update( {")),
+    );
+    let output = package.path().join("dist");
+    fs::create_dir(&output).unwrap();
+    fs::write(output.join("keep.txt"), b"keep").unwrap();
+
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("syntax"),
+        "{}",
+        output_text(&checked)
+    );
+    let packed = run_pack(&manifest, &output);
+    assert!(!packed.status.success(), "{}", output_text(&packed));
+    assert_eq!(fs::read(output.join("keep.txt")).unwrap(), b"keep");
+}
+
+#[test]
+fn script_check_rejects_static_imports_and_reexports() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some((
+            "scripts/actor.js",
+            b"import x from './x.js'; export default x;",
+        )),
+    );
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("module loader"),
+        "{}",
+        output_text(&checked)
+    );
+
+    fs::write(
+        package.path().join("scripts/actor.js"),
+        b"export { x } from './x.js'; export default {};",
+    )
+    .unwrap();
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("module loader"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[test]
+fn script_check_rejects_dynamic_import_without_running_it() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some((
+            "scripts/actor.js",
+            b"export default { update() { return import('./child.js'); } };",
+        )),
+    );
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("module loader"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[test]
+fn script_check_rejects_invalid_utf8_and_oversized_source() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", &[0xff, 0xfe])),
+    );
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("UTF-8"),
+        "{}",
+        output_text(&checked)
+    );
+
+    fs::write(
+        package.path().join("scripts/actor.js"),
+        vec![b' '; 1024 * 1024 + 1],
+    )
+    .unwrap();
+    let checked = run_check(&manifest);
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("1048576"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[test]
+fn script_pack_refuses_independently_authored_package() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        &package.path().join("source"),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let output = package.path().join("dist");
+    write_package(
+        &output,
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default { update() {} };")),
+    );
+    let before = snapshot(&output);
+
+    let result = run_pack(&manifest, &output);
+    assert!(!result.status.success(), "{}", output_text(&result));
+    assert_eq!(snapshot(&output), before);
+}
+
+#[test]
+fn script_pack_refuses_modified_managed_files_and_untracked_content() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let output = package.path().join("dist");
+    assert!(run_pack(&manifest, &output).status.success());
+    fs::write(
+        output.join("scripts/actor.js"),
+        b"export default { update() {} };",
+    )
+    .unwrap();
+    let result = run_pack(&manifest, &output);
+    assert!(!result.status.success(), "{}", output_text(&result));
+
+    fs::write(output.join("scripts/actor.js"), b"export default {};").unwrap();
+    fs::write(output.join("notes.txt"), b"keep").unwrap();
+    let result = run_pack(&manifest, &output);
+    assert!(!result.status.success(), "{}", output_text(&result));
+    assert_eq!(fs::read(output.join("notes.txt")).unwrap(), b"keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn script_pack_refuses_symlink_in_managed_output() {
+    use std::os::unix::fs::symlink;
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let output = package.path().join("dist");
+    assert!(run_pack(&manifest, &output).status.success());
+    fs::remove_file(output.join("scripts/actor.js")).unwrap();
+    symlink(
+        package.path().join("scripts/actor.js"),
+        output.join("scripts/actor.js"),
+    )
+    .unwrap();
+    let result = run_pack(&manifest, &output);
+    assert!(!result.status.success(), "{}", output_text(&result));
+    assert!(
+        fs::symlink_metadata(output.join("scripts/actor.js"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
 }

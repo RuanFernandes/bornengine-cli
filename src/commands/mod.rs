@@ -158,7 +158,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             ScriptCommands::Pack { output, manifest } => {
                 let summary = scripts::pack_package(manifest.as_deref(), &output)?;
                 println!(
-                    "Packed {} script entry ({} bytes) to {}",
+                    "Packed {} script package files ({} bytes) to {}",
                     summary.files,
                     summary.bytes,
                     output.display()

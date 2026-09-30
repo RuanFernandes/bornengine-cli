@@ -162,7 +162,7 @@ Place a `bornengine.script.json` at the package root:
 }
 ```
 
-The `entry` must be a regular `.js` or `.mjs` file inside the package. Permissions must be sorted, unique, and selected from `log`, `self.particles.emit`, `self.read`, and `self.transform.write`. `script check` validates this manifest and entry path without executing JavaScript. `script pack` writes only the manifest and declared entry; use an empty output directory or one previously created by this command. It refuses to replace directories containing files it does not own, and repeated packs produce the same output bytes.
+The `entry` must be a regular UTF-8 `.js` or `.mjs` file inside the package, no larger than 1 MiB. Permissions must be sorted, unique, and selected from `log`, `self.particles.emit`, `self.read`, and `self.transform.write`. `script check` parses the module without executing JavaScript. Static imports, re-exports from another module, and dynamic imports are rejected because v1 has no module loader. `script pack` applies the same checks, then writes the declared entry, manifest, and `.bornengine-pack.json` ownership marker. The marker records hashes of both package files. Use an empty output directory or one previously created by this command; a separately authored package, changed packaged file, symbolic link, or untracked content is never replaced. Repeated packs produce the same output bytes. The pack summary counts all three output files.
 
 ## Troubleshooting
 

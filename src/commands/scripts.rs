@@ -1,14 +1,27 @@
 use anyhow::{Context, Result, bail};
+use boa_ast::{
+    ModuleItem,
+    declaration::ExportDeclaration,
+    expression::ImportCall,
+    scope::Scope,
+    visitor::{VisitWith, Visitor},
+};
+use boa_interner::Interner;
+use boa_parser::{Parser, Source};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
+use std::io::{self, Read};
+use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MANIFEST_NAME: &str = "bornengine.script.json";
 const MANIFEST_FORMAT: &str = "bornengine-script-v1";
 const API_VERSION: u32 = 1;
+const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
+const OWNERSHIP_NAME: &str = ".bornengine-pack.json";
 const ALLOWED_PERMISSIONS: [&str; 4] = [
     "log",
     "self.particles.emit",
@@ -35,7 +48,15 @@ pub struct ScriptPackSummary {
 struct ScriptPackage {
     manifest: ScriptPackageManifest,
     root: PathBuf,
-    entry_path: PathBuf,
+    entry_bytes: Vec<u8>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PackOwnership {
+    format: String,
+    manifest_sha256: String,
+    entry_sha256: String,
 }
 
 pub fn check_package(manifest_path: Option<&Path>) -> Result<ScriptPackageManifest> {
@@ -48,8 +69,7 @@ pub fn pack_package(
     output_directory: &Path,
 ) -> Result<ScriptPackSummary> {
     let package = read_package(manifest_path)?;
-    let entry_bytes = fs::read(&package.entry_path)
-        .with_context(|| format!("could not read script entry `{}`", package.manifest.entry))?;
+    let entry_bytes = &package.entry_bytes;
 
     let requested_output = absolute_path(output_directory)?;
     reject_symlink_components(&requested_output, "script output")?;
@@ -101,18 +121,30 @@ pub fn pack_package(
             staged_entry_parent.display()
         )
     })?;
-    fs::write(&staged_entry, &entry_bytes)
+    fs::write(&staged_entry, entry_bytes)
         .with_context(|| format!("could not stage script entry `{}`", package.manifest.entry))?;
 
     let mut manifest_bytes = serde_json::to_vec_pretty(&package.manifest)?;
     manifest_bytes.push(b'\n');
+    let manifest_digest = sha256(&manifest_bytes);
+    let manifest_bytes_len = manifest_bytes.len();
     fs::write(staged_files.join(MANIFEST_NAME), manifest_bytes)
         .context("could not stage script manifest")?;
+    let marker = PackOwnership {
+        format: "bornengine-cli-script-pack-v1".into(),
+        manifest_sha256: manifest_digest,
+        entry_sha256: sha256(entry_bytes),
+    };
+    let mut marker_bytes = serde_json::to_vec_pretty(&marker)?;
+    marker_bytes.push(b'\n');
+    let marker_bytes_len = marker_bytes.len();
+    fs::write(staged_files.join(OWNERSHIP_NAME), marker_bytes)
+        .context("could not stage script pack ownership marker")?;
 
     publish_pack(&output, &mut stage, &staged_files, output_exists)?;
     Ok(ScriptPackSummary {
-        files: 1,
-        bytes: entry_bytes.len() as u64,
+        files: 3,
+        bytes: (entry_bytes.len() + manifest_bytes_len + marker_bytes_len) as u64,
         entry: package.manifest.entry,
     })
 }
@@ -150,11 +182,67 @@ fn read_package(manifest_path: Option<&Path>) -> Result<ScriptPackage> {
         .with_context(|| format!("invalid script manifest {}", manifest_path.display()))?;
     validate_manifest(&manifest)?;
     let entry_path = resolve_regular_entry(&root, &manifest.entry)?;
+    let entry_bytes = read_bounded_entry(&entry_path, &manifest.entry)?;
+    validate_source(&entry_bytes)?;
     Ok(ScriptPackage {
         manifest,
         root,
-        entry_path,
+        entry_bytes,
     })
+}
+
+fn read_bounded_entry(path: &Path, entry: &str) -> Result<Vec<u8>> {
+    let metadata =
+        fs::metadata(path).with_context(|| format!("could not inspect script entry `{entry}`"))?;
+    if metadata.len() > MAX_SOURCE_BYTES {
+        bail!("script entry `{entry}` exceeds the 1048576 byte limit");
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .with_context(|| format!("could not read script entry `{entry}`"))?
+        .take(MAX_SOURCE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("could not read script entry `{entry}`"))?;
+    if bytes.len() as u64 > MAX_SOURCE_BYTES {
+        bail!("script entry `{entry}` exceeds the 1048576 byte limit");
+    }
+    Ok(bytes)
+}
+
+fn validate_source(bytes: &[u8]) -> Result<()> {
+    let source = std::str::from_utf8(bytes).context("script entry must be UTF-8")?;
+    let mut parser = Parser::new(Source::from_bytes(source));
+    let mut interner = Interner::default();
+    let module = parser
+        .parse_module(&Scope::new_global(), &mut interner)
+        .map_err(|error| anyhow::anyhow!("script entry has invalid JavaScript syntax: {error}"))?;
+    for item in module.items().items() {
+        match item {
+            ModuleItem::ImportDeclaration(_)
+            | ModuleItem::ExportDeclaration(ExportDeclaration::ReExport { .. }) => {
+                bail!(
+                    "script entry uses a static import or re-export, but v1 has no module loader"
+                );
+            }
+            _ => {}
+        }
+    }
+    struct DynamicImportFinder;
+    impl<'ast> Visitor<'ast> for DynamicImportFinder {
+        type BreakTy = ();
+
+        fn visit_import_call(&mut self, _: &'ast ImportCall) -> ControlFlow<Self::BreakTy> {
+            ControlFlow::Break(())
+        }
+    }
+    if module.visit_with(&mut DynamicImportFinder).is_break() {
+        bail!("script entry uses dynamic import, but v1 has no module loader");
+    }
+    Ok(())
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn validate_manifest(manifest: &ScriptPackageManifest) -> Result<()> {
@@ -262,6 +350,18 @@ fn validate_previous_pack(output: &Path) -> Result<()> {
         return Ok(());
     }
 
+    let marker_path = output.join(OWNERSHIP_NAME);
+    let marker_metadata = fs::symlink_metadata(&marker_path)
+        .context("refusing to replace script output without a CLI ownership marker")?;
+    if !marker_metadata.is_file() || marker_metadata.file_type().is_symlink() {
+        bail!("existing script output ownership marker is not a regular file");
+    }
+    let marker: PackOwnership = serde_json::from_slice(&fs::read(&marker_path)?)
+        .context("existing script output ownership marker is invalid")?;
+    if marker.format != "bornengine-cli-script-pack-v1" {
+        bail!("existing script output ownership marker has an unknown format");
+    }
+
     let manifest_path = output.join(MANIFEST_NAME);
     match fs::symlink_metadata(&manifest_path) {
         Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {}
@@ -275,13 +375,24 @@ fn validate_previous_pack(output: &Path) -> Result<()> {
     };
     let bytes =
         fs::read(&manifest_path).context("could not read existing script output manifest")?;
+    if marker.manifest_sha256 != sha256(&bytes) {
+        bail!("refusing to replace modified script output manifest");
+    }
     let previous: ScriptPackageManifest = serde_json::from_slice(&bytes)
         .context("existing script output has an invalid BornEngine manifest")?;
     validate_manifest(&previous).context("existing script output manifest is invalid")?;
-    resolve_regular_entry(output, &previous.entry)
+    let previous_entry = resolve_regular_entry(output, &previous.entry)
         .context("existing script output entry is invalid")?;
+    let previous_bytes = read_bounded_entry(&previous_entry, &previous.entry)?;
+    if marker.entry_sha256 != sha256(&previous_bytes) {
+        bail!("refusing to replace modified script output entry");
+    }
 
-    let expected_files = BTreeSet::from([MANIFEST_NAME.to_owned(), previous.entry.clone()]);
+    let expected_files = BTreeSet::from([
+        OWNERSHIP_NAME.to_owned(),
+        MANIFEST_NAME.to_owned(),
+        previous.entry.clone(),
+    ]);
     let mut expected_directories = BTreeSet::new();
     let mut parent = Path::new(&previous.entry).parent();
     while let Some(directory) = parent {
