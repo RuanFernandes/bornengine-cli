@@ -91,6 +91,60 @@ fn script_check_accepts_valid_package() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn script_check_and_pack_accept_directory_aliases_outside_the_package_and_output() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let real_parent = temp.path().join("real");
+    write_package(
+        &real_parent.join("source"),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let alias = temp.path().join("alias");
+    symlink(&real_parent, &alias).unwrap();
+    let aliased_manifest = alias.join("source/bornengine.script.json");
+    let aliased_output = alias.join("dist/package");
+
+    let checked = run_check(&aliased_manifest);
+    assert!(checked.status.success(), "{}", output_text(&checked));
+    let packed = run_pack(&aliased_manifest, &aliased_output);
+    assert!(packed.status.success(), "{}", output_text(&packed));
+    assert_eq!(
+        fs::read(real_parent.join("dist/package/scripts/actor.js")).unwrap(),
+        b"export default {};"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn script_check_and_pack_accept_verbatim_drive_paths() {
+    let package = tempfile::tempdir().unwrap();
+    let manifest = write_package(
+        package.path(),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    let verbatim_manifest = fs::canonicalize(&manifest).unwrap();
+    let verbatim_output = fs::canonicalize(package.path()).unwrap().join("dist");
+    assert!(
+        verbatim_manifest.to_string_lossy().starts_with(r"\\?\"),
+        "expected a Windows verbatim path: {}",
+        verbatim_manifest.display()
+    );
+
+    let checked = run_check(&verbatim_manifest);
+    assert!(checked.status.success(), "{}", output_text(&checked));
+    let packed = run_pack(&verbatim_manifest, &verbatim_output);
+    assert!(packed.status.success(), "{}", output_text(&packed));
+    assert_eq!(
+        fs::read(verbatim_output.join("scripts/actor.js")).unwrap(),
+        b"export default {};"
+    );
+}
+
 #[test]
 fn script_check_rejects_unknown_api_or_permission() {
     let package = tempfile::tempdir().unwrap();
@@ -695,4 +749,82 @@ fn script_pack_refuses_symlink_in_managed_output() {
             .file_type()
             .is_symlink()
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn script_check_refuses_manifest_leaf_symlink_through_directory_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let real_parent = temp.path().join("real");
+    let manifest = write_package(
+        &real_parent.join("source"),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    symlink(&real_parent, temp.path().join("alias")).unwrap();
+    symlink(&manifest, real_parent.join("source/linked.json")).unwrap();
+
+    let checked = run_check(&temp.path().join("alias/source/linked.json"));
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("regular file"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn script_check_refuses_entry_symlink_through_directory_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let real_parent = temp.path().join("real");
+    write_package(&real_parent.join("source"), VALID_MANIFEST, None);
+    fs::create_dir_all(real_parent.join("source/scripts")).unwrap();
+    let outside = temp.path().join("outside.js");
+    fs::write(&outside, b"export default {};").unwrap();
+    symlink(&outside, real_parent.join("source/scripts/actor.js")).unwrap();
+    symlink(&real_parent, temp.path().join("alias")).unwrap();
+
+    let checked = run_check(&temp.path().join("alias/source/bornengine.script.json"));
+    assert!(!checked.status.success(), "{}", output_text(&checked));
+    assert!(
+        output_text(&checked).contains("symbolic links"),
+        "{}",
+        output_text(&checked)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn script_pack_refuses_output_leaf_symlink_through_directory_alias() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let real_parent = temp.path().join("real");
+    write_package(
+        &real_parent.join("source"),
+        VALID_MANIFEST,
+        Some(("scripts/actor.js", b"export default {};")),
+    );
+    symlink(&real_parent, temp.path().join("alias")).unwrap();
+    let separate_output = temp.path().join("separate-output");
+    fs::create_dir(&separate_output).unwrap();
+    fs::create_dir(real_parent.join("dist")).unwrap();
+    symlink(&separate_output, real_parent.join("dist/package")).unwrap();
+
+    let packed = run_pack(
+        &temp.path().join("alias/source/bornengine.script.json"),
+        &temp.path().join("alias/dist/package"),
+    );
+    assert!(!packed.status.success(), "{}", output_text(&packed));
+    assert!(
+        output_text(&packed).contains("symbolic link"),
+        "{}",
+        output_text(&packed)
+    );
+    assert_eq!(fs::read_dir(&separate_output).unwrap().count(), 0);
 }

@@ -75,7 +75,6 @@ pub fn pack_package(
     let entry_bytes = &package.entry_bytes;
 
     let requested_output = absolute_path(output_directory)?;
-    reject_symlink_components(&requested_output, "script output")?;
     let output_parent = requested_output
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -83,7 +82,6 @@ pub fn pack_package(
         .unwrap_or_else(|| PathBuf::from("."));
     fs::create_dir_all(&output_parent)
         .with_context(|| format!("could not create output parent {}", output_parent.display()))?;
-    reject_symlink_components(&output_parent, "script output parent")?;
 
     let output_parent = fs::canonicalize(&output_parent).with_context(|| {
         format!(
@@ -96,7 +94,6 @@ pub fn pack_package(
         .filter(|name| !name.is_empty())
         .context("script output must name a directory")?;
     let output = output_parent.join(output_name);
-    reject_symlink_components(&output, "script output")?;
     if output == package.root || package.root.starts_with(&output) {
         bail!("script output must not replace the package root or one of its parents");
     }
@@ -154,8 +151,20 @@ pub fn pack_package(
 
 fn read_package(manifest_path: Option<&Path>) -> Result<ScriptPackage> {
     let manifest_input = manifest_path.unwrap_or_else(|| Path::new(MANIFEST_NAME));
-    let manifest_path = absolute_path(manifest_input)?;
-    reject_symlink_components(&manifest_path, "script manifest")?;
+    let requested_manifest = absolute_path(manifest_input)?;
+    let manifest_parent = requested_manifest
+        .parent()
+        .context("script manifest has no parent directory")?;
+    let manifest_name = requested_manifest
+        .file_name()
+        .context("script manifest must name a file")?;
+    let manifest_parent = fs::canonicalize(manifest_parent).with_context(|| {
+        format!(
+            "could not resolve script manifest parent {}",
+            manifest_parent.display()
+        )
+    })?;
+    let manifest_path = manifest_parent.join(manifest_name);
     let metadata = fs::symlink_metadata(&manifest_path).with_context(|| {
         format!(
             "could not inspect script manifest {}",
@@ -870,29 +879,6 @@ fn absolute_path(path: &Path) -> Result<PathBuf> {
     } else {
         Ok(std::env::current_dir()?.join(path))
     }
-}
-
-fn reject_symlink_components(path: &Path, label: &str) -> Result<()> {
-    let absolute = absolute_path(path)?;
-    let mut current = PathBuf::new();
-    for component in absolute.components() {
-        current.push(component.as_os_str());
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                bail!(
-                    "refusing symbolic link in {label} path {}",
-                    current.display()
-                );
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("could not inspect {}", current.display()));
-            }
-        }
-    }
-    Ok(())
 }
 
 struct ScriptPackStage {
