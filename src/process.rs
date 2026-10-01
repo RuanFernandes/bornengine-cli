@@ -98,10 +98,21 @@ pub fn captured_command(
     cwd: Option<&Path>,
     verbose: bool,
 ) -> Result<Output> {
+    captured_command_with_env(program, args, cwd, verbose, &[])
+}
+
+pub fn captured_command_with_env(
+    program: &str,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    verbose: bool,
+    envs: &[(OsString, OsString)],
+) -> Result<Output> {
     let mut command = Command::new(program_for_spawn(program));
     configure_child_linkers(&mut command);
     command
         .args(args)
+        .envs(envs.iter().cloned())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(cwd) = cwd {
@@ -121,9 +132,19 @@ pub fn inherited_command(
     cwd: Option<&Path>,
     verbose: bool,
 ) -> Result<i32> {
+    inherited_command_with_env(program, args, cwd, verbose, &[])
+}
+
+pub fn inherited_command_with_env(
+    program: &str,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    verbose: bool,
+    envs: &[(OsString, OsString)],
+) -> Result<i32> {
     let mut command = Command::new(program_for_spawn(program));
     configure_child_linkers(&mut command);
-    command.args(args);
+    command.args(args).envs(envs.iter().cloned());
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
@@ -168,6 +189,11 @@ pub fn executable_in_path(executable: &str) -> bool {
         return false;
     };
     find_program_in_path(OsStr::new(executable), &path, &path_extensions()).is_some()
+}
+
+pub fn executable_path_in_path(executable: &str) -> Option<PathBuf> {
+    let search_path = std::env::var_os("PATH")?;
+    find_program_in_path(OsStr::new(executable), &search_path, &path_extensions())
 }
 
 fn program_for_spawn(program: &str) -> OsString {

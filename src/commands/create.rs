@@ -2,6 +2,7 @@ use crate::commands::project;
 use crate::config::Config;
 use crate::engine::{EngineRelease, list_engine_releases};
 use crate::package_manager::PackageManager;
+use crate::project::GameKind;
 use crate::project::validate_project_name;
 use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
@@ -22,6 +23,7 @@ pub fn create(verbose: bool) -> Result<i32> {
         Some(choices.package_manager),
         Some(choices.engine_release.version),
         None,
+        choices.game_kind,
         verbose,
     )
 }
@@ -38,6 +40,7 @@ fn require_interactive(available: bool) -> Result<()> {
 #[derive(Debug)]
 struct CreateChoices {
     project_name: String,
+    game_kind: GameKind,
     package_manager: PackageManager,
     engine_release: EngineRelease,
 }
@@ -86,6 +89,17 @@ fn collect_choices(
     let project_name = prompts.input_text("Project name")?;
     validate_project_name(&project_name)?;
 
+    let game_kinds = [GameKind::TwoD, GameKind::TwoPointFiveD, GameKind::ThreeD];
+    let game_kind_options = game_kinds
+        .iter()
+        .map(|kind| kind.label().to_owned())
+        .collect::<Vec<_>>();
+    let game_kind_index = prompts.select("Game type", &game_kind_options, 0)?;
+    let game_kind = game_kinds
+        .get(game_kind_index)
+        .copied()
+        .context("game-type selection is outside the available options")?;
+
     let managers = [
         PackageManager::Pnpm,
         PackageManager::Npm,
@@ -129,6 +143,7 @@ fn collect_choices(
 
     Ok(CreateChoices {
         project_name,
+        game_kind,
         package_manager,
         engine_release,
     })
@@ -193,22 +208,26 @@ mod tests {
         let releases = releases();
         let mut prompts = FakePrompts {
             name: "MyGame".to_owned(),
-            selections: vec![2, 0],
+            selections: vec![2, 2, 0],
             calls: Vec::new(),
         };
 
         let choices = collect_choices(&config, &releases, &mut prompts).unwrap();
 
         assert_eq!(choices.project_name, "MyGame");
+        assert_eq!(choices.game_kind, crate::project::GameKind::ThreeD);
         assert_eq!(choices.package_manager, PackageManager::Yarn);
         assert_eq!(choices.engine_release, releases[0]);
-        assert_eq!(prompts.calls[0].prompt, "Package manager");
-        assert_eq!(prompts.calls[0].options, ["pnpm", "npm", "yarn"]);
-        assert_eq!(prompts.calls[0].default, 1);
-        assert_eq!(prompts.calls[1].prompt, "BornEngine version");
-        assert!(prompts.calls[1].options[0].contains("0.4.16"));
-        assert!(prompts.calls[1].options[1].contains("0.4.15"));
+        assert_eq!(prompts.calls[0].prompt, "Game type");
+        assert_eq!(prompts.calls[0].options, ["2D", "2.5D", "3D"]);
+        assert_eq!(prompts.calls[0].default, 0);
+        assert_eq!(prompts.calls[1].prompt, "Package manager");
+        assert_eq!(prompts.calls[1].options, ["pnpm", "npm", "yarn"]);
         assert_eq!(prompts.calls[1].default, 1);
+        assert_eq!(prompts.calls[2].prompt, "BornEngine version");
+        assert!(prompts.calls[2].options[0].contains("0.4.16"));
+        assert!(prompts.calls[2].options[1].contains("0.4.15"));
+        assert_eq!(prompts.calls[2].default, 1);
     }
 
     #[test]
@@ -219,7 +238,7 @@ mod tests {
         };
         let mut prompts = FakePrompts {
             name: "MyGame".to_owned(),
-            selections: vec![0, 0],
+            selections: vec![0, 0, 0],
             calls: Vec::new(),
         };
 
@@ -227,6 +246,7 @@ mod tests {
 
         assert_eq!(prompts.calls[0].default, 0);
         assert_eq!(prompts.calls[1].default, 0);
+        assert_eq!(prompts.calls[2].default, 0);
     }
 
     #[test]

@@ -65,6 +65,44 @@ fn new_accepts_package_manager_and_local_engine_path() {
 }
 
 #[test]
+fn new_accepts_each_native_game_profile() {
+    for (kind, expected) in [
+        ("2d", bornengine_cli::project::GameKind::TwoD),
+        ("2.5d", bornengine_cli::project::GameKind::TwoPointFiveD),
+        ("3d", bornengine_cli::project::GameKind::ThreeD),
+    ] {
+        let cli =
+            Cli::try_parse_from(["bornengine", "new", "MyGame", "--game-type", kind]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Commands::New { game_type, .. } if game_type == expected
+        ));
+    }
+}
+
+#[test]
+fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
+    let default = Cli::try_parse_from(["bornengine", "init"]).unwrap();
+    assert!(matches!(
+        default.command,
+        Commands::Init {
+            game_type: bornengine_cli::project::GameKind::TwoD,
+            ..
+        }
+    ));
+
+    let explicit = Cli::try_parse_from(["bornengine", "init", "--game-type", "3d"]).unwrap();
+    assert!(matches!(
+        explicit.command,
+        Commands::Init {
+            game_type: bornengine_cli::project::GameKind::ThreeD,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn new_accepts_short_package_manager_and_engine_aliases() {
     let cli = Cli::try_parse_from([
         "bornengine",

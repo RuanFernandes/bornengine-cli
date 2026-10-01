@@ -1,4 +1,6 @@
-use bornengine_cli::project::{ProjectSpec, create_project, find_project_root, initialize_project};
+use bornengine_cli::project::{
+    GameKind, ProjectSpec, create_project, find_project_root, initialize_project,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -7,6 +9,7 @@ fn release_spec() -> ProjectSpec {
     ProjectSpec {
         engine_package: "@bloomengine/engine".to_owned(),
         engine_spec: "0.4.16".to_owned(),
+        game_kind: GameKind::TwoD,
     }
 }
 
@@ -45,6 +48,7 @@ fn local_engine_spec_is_kept_in_package_json_and_allowlist() {
         &ProjectSpec {
             engine_package: "@bornengine/engine".to_owned(),
             engine_spec: "link:../BornEngine".to_owned(),
+            game_kind: GameKind::TwoPointFiveD,
         },
     )
     .unwrap();
@@ -64,6 +68,34 @@ fn local_engine_spec_is_kept_in_package_json_and_allowlist() {
             .unwrap()
             .contains("from \"@bornengine/engine\"")
     );
+}
+
+#[test]
+fn generated_profile_is_owned_by_bornengine_and_readable_by_its_cli() {
+    let profiles = [
+        (GameKind::TwoD, "2d"),
+        (GameKind::TwoPointFiveD, "2.5d"),
+        (GameKind::ThreeD, "3d"),
+    ];
+    for (index, (game_kind, expected_features)) in profiles.iter().enumerate() {
+        let parent = tempfile::tempdir().unwrap();
+        let project = create_project(
+            parent.path(),
+            &format!("Profile{index}"),
+            &ProjectSpec {
+                engine_package: "@bornengine/engine".to_owned(),
+                engine_spec: "0.11.0".to_owned(),
+                game_kind: *game_kind,
+            },
+        )
+        .unwrap();
+        let perry: toml::Value =
+            toml::from_str(&fs::read_to_string(project.join("perry.toml")).unwrap()).unwrap();
+        assert_eq!(
+            perry["bornengine"]["native_profile"].as_str(),
+            Some(*expected_features)
+        );
+    }
 }
 
 #[test]
