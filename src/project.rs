@@ -1,16 +1,70 @@
 use crate::engine_package::{ENGINE_PACKAGES, is_engine_package, native_library_allow_pattern};
 use anyhow::{Context, Result, bail};
+use clap::ValueEnum;
 use serde_json::{Map, Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-const GENERATED_FILES: &[&str] = &["package.json", "main.ts", ".gitignore", "README.md"];
+const GENERATED_FILES: &[&str] = &[
+    "package.json",
+    "perry.toml",
+    "main.ts",
+    ".gitignore",
+    "README.md",
+];
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum GameKind {
+    #[default]
+    #[value(name = "2d")]
+    TwoD,
+    #[value(name = "2.5d")]
+    TwoPointFiveD,
+    #[value(name = "3d")]
+    ThreeD,
+}
+
+impl GameKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::TwoD => "2D",
+            Self::TwoPointFiveD => "2.5D",
+            Self::ThreeD => "3D",
+        }
+    }
+
+    pub const fn native_features(self) -> &'static [&'static str] {
+        match self {
+            Self::TwoD => &["mp3"],
+            Self::TwoPointFiveD => &["mp3", "models3d", "image-extras"],
+            Self::ThreeD => &["mp3", "jolt", "models3d", "image-extras"],
+        }
+    }
+
+    pub const fn native_profile(self) -> &'static str {
+        match self {
+            Self::TwoD => "2d",
+            Self::TwoPointFiveD => "2.5d",
+            Self::ThreeD => "3d",
+        }
+    }
+
+    pub fn from_native_profile(profile: &str) -> Option<Self> {
+        match profile.trim().to_ascii_lowercase().as_str() {
+            "2d" => Some(Self::TwoD),
+            "2.5d" => Some(Self::TwoPointFiveD),
+            "3d" => Some(Self::ThreeD),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectSpec {
     pub engine_package: String,
     pub engine_spec: String,
+    pub game_kind: GameKind,
 }
 
 pub fn create_project(parent: &Path, project_name: &str, spec: &ProjectSpec) -> Result<PathBuf> {
@@ -138,6 +192,7 @@ fn generated_files(
         }),
     );
     let package_json = serde_json::to_string_pretty(&Value::Object(package))? + "\n";
+    let perry_toml = generated_perry_toml(package_name, spec);
     let main_ts = format!(
         r#"import {{ Game }} from "{engine_package}";
 
@@ -175,10 +230,22 @@ new StarterGame().run();
     );
     Ok(vec![
         ("package.json", package_json),
+        ("perry.toml", perry_toml),
         ("main.ts", main_ts),
         (".gitignore", gitignore.to_owned()),
         ("README.md", readme),
     ])
+}
+
+fn generated_perry_toml(package_name: &str, spec: &ProjectSpec) -> String {
+    let mut config = format!("[project]\nname = \"{package_name}\"\nentry = \"main.ts\"\n");
+    if spec.engine_package == "@bornengine/engine" {
+        config.push_str(&format!(
+            "\n[bornengine]\nnative_profile = \"{}\"\n",
+            spec.game_kind.native_profile()
+        ));
+    }
+    config
 }
 
 fn validate_spec(spec: &ProjectSpec) -> Result<()> {

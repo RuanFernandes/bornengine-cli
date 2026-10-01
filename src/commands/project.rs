@@ -2,7 +2,9 @@ use crate::config::Config;
 use crate::engine::{local_engine_dependency, resolve_engine_release};
 use crate::package_manager::PackageManager;
 use crate::process::{executable_in_path, inherited_command};
-use crate::project::{ProjectSpec, create_project, initialize_project, validate_project_name};
+use crate::project::{
+    GameKind, ProjectSpec, create_project, initialize_project, validate_project_name,
+};
 use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
@@ -13,6 +15,7 @@ pub fn new(
     package_manager: Option<PackageManager>,
     engine_version: Option<String>,
     engine_path: Option<PathBuf>,
+    game_type: GameKind,
     verbose: bool,
 ) -> Result<i32> {
     validate_project_name(project_name)?;
@@ -30,12 +33,16 @@ pub fn new(
         engine_path.as_deref(),
         &root,
         &config,
+        game_type,
     )?;
 
     println!(
         "{}",
         ui::paint(
-            format!("Creating BornEngine project: {project_name}"),
+            format!(
+                "Creating {} BornEngine project: {project_name}",
+                game_type.label()
+            ),
             Tone::Heading
         )
     );
@@ -47,6 +54,7 @@ pub fn init(
     package_manager: Option<PackageManager>,
     engine_version: Option<String>,
     engine_path: Option<PathBuf>,
+    game_type: GameKind,
     verbose: bool,
 ) -> Result<i32> {
     let root = std::env::current_dir()
@@ -67,12 +75,17 @@ pub fn init(
         engine_path.as_deref(),
         &root,
         &config,
+        game_type,
     )?;
 
     println!(
         "{}",
         ui::paint(
-            format!("Initializing BornEngine project in {}", root.display()),
+            format!(
+                "Initializing {} BornEngine project in {}",
+                game_type.label(),
+                root.display()
+            ),
             Tone::Heading
         )
     );
@@ -111,6 +124,7 @@ pub fn resolve_project_spec(
     explicit_path: Option<&Path>,
     project_root: &Path,
     config: &Config,
+    game_kind: GameKind,
 ) -> Result<ProjectSpec> {
     let environment_path = std::env::var_os("BORNENGINE_PATH").map(PathBuf::from);
     if let Some(path) = explicit_path.or(environment_path.as_deref()) {
@@ -118,6 +132,7 @@ pub fn resolve_project_spec(
         return Ok(ProjectSpec {
             engine_package: dependency.package_name,
             engine_spec: dependency.spec,
+            game_kind,
         });
     }
     let requested = explicit_version.unwrap_or(&config.engine_version);
@@ -125,6 +140,7 @@ pub fn resolve_project_spec(
     Ok(ProjectSpec {
         engine_package: release.package_name,
         engine_spec: release.version,
+        game_kind,
     })
 }
 

@@ -1,4 +1,5 @@
 use crate::package_manager::PackageManager;
+use crate::project::GameKind;
 use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -39,6 +40,14 @@ pub enum Commands {
         engine_version: Option<String>,
         #[arg(long, alias = "engine", help = "Path to a local BornEngine checkout")]
         engine_path: Option<PathBuf>,
+        #[arg(
+            long = "game-type",
+            alias = "kind",
+            value_enum,
+            default_value = "2d",
+            help = "BornEngine native Rust profile for the new game (2d, 2.5d, or 3d)"
+        )]
+        game_type: GameKind,
     },
     /// Initialize a BornEngine game in the current directory.
     Init {
@@ -57,6 +66,14 @@ pub enum Commands {
         engine_version: Option<String>,
         #[arg(long, alias = "engine", help = "Path to a local BornEngine checkout")]
         engine_path: Option<PathBuf>,
+        #[arg(
+            long = "game-type",
+            alias = "kind",
+            value_enum,
+            default_value = "2d",
+            help = "BornEngine native Rust profile for this game (2d, 2.5d, or 3d)"
+        )]
+        game_type: GameKind,
     },
     /// Compile a game for a platform.
     Build {

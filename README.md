@@ -22,15 +22,15 @@ cd MyGame
 bornengine run main.ts
 ```
 
-`create` interactively asks for a project name, package manager, and stable engine version from npm. It uses your configured package manager and engine version as the initial selections. For scripts and non-interactive use, `new` creates a starter game, writes Perry's native-library allowlist, installs the selected engine package, and creates the package manager lockfile. Normal projects do not require a separate BornEngine clone.
+`create` interactively asks for a project name, game profile, package manager, and stable engine version from npm. It uses your configured package manager and engine version as the initial selections. For scripts and non-interactive use, `new` creates a starter game, writes Perry's native-library allowlist and BornEngine's Rust profile to `perry.toml`, installs the selected engine package, and creates the package manager lockfile. Use the BornEngine CLI's `build`, `run`, or `dev` command so it can apply the selected Rust profile. Normal projects do not require a separate BornEngine clone.
 
 ## Commands
 
 | Command | Purpose |
 | --- | --- |
-| `bornengine create` | Interactively select a project name, package manager, and stable engine version from npm. |
-| `bornengine new <name>` | Create a project and install its dependencies. |
-| `bornengine init` | Add a new project scaffold to an otherwise empty directory. It refuses to overwrite generated files. |
+| `bornengine create` | Interactively select a project name, 2D/2.5D/3D profile, package manager, and stable engine version from npm. |
+| `bornengine new <name>` | Create a project with a 2D/2.5D/3D native feature profile and install its dependencies. |
+| `bornengine init` | Add a profile-configured project scaffold to an otherwise empty directory. It refuses to overwrite generated files. |
 | `bornengine build <entry>` | Compile for the host or a requested target. |
 | `bornengine run <entry>` | Build and run for the current host. |
 | `bornengine dev <entry>` | Build and run once; pass `--watch` to use Perry's rebuild-and-restart loop. |
@@ -53,7 +53,10 @@ bornengine run main.ts
 Examples:
 
 ```sh
-bornengine new MyGame --package-manager npm --engine-version 0.4.17
+bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.4.17
+bornengine new MyAdventure --game-type 2.5d
+bornengine new MyWorld --game-type 3d
+bornengine init --game-type 3d
 bornengine build main.ts --name my-game --os linux
 bornengine build main.ts --target ios-simulator
 bornengine dev main.ts --watch
@@ -62,6 +65,8 @@ bornengine assets validate
 bornengine assets pack --output dist/game
 bornengine config set package-manager pnpm
 ```
+
+`--game-type` accepts `2d`, `2.5d`, or `3d` and defaults to `2d`; `--kind` is an alias. It stores the profile in `[bornengine].native_profile` in `perry.toml`. During `bornengine build`, `run`, and `dev`, the CLI forwards the selected Cargo features to BornEngine's native Rust crate; `dev` also enables hot reload. It does not change builds of other Cargo packages. The 2D profile enables MP3 decoding and omits Jolt physics, 3D model loading, and extra image codecs; 2.5D adds model loading and common 3D image formats; 3D also enables Jolt. Add optional engine features such as `debug-ui` with `native_features = ["debug-ui"]` in the same `[bornengine]` table. Web currently uses the prebuilt WASM package, so these Rust profiles do not reduce the Web artifact. Edit `perry.toml` to change profiles; direct `perry compile` commands use the package's default Cargo features instead of this BornEngine CLI setting.
 
 The package manager can be shortened to `--pm`; `--engine` aliases `--engine-path`. `-o` is the friendly OS selector, and `-n` / `--name` sets the output name. `--os` and `--target` are mutually exclusive.
 

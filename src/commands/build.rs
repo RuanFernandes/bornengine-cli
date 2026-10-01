@@ -1,15 +1,18 @@
 use crate::build_artifacts::{
     begin_build, begin_dev_build, clean_build_artifacts, record_build_files,
 };
+use crate::cargo_profile::{CargoProfileProxy, read_native_features, read_native_profile};
 use crate::commands::assets::{pack_project, validate_project_assets};
-use crate::engine::engine_dependency;
+use crate::engine::{EngineDependency, engine_dependency};
 use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
 };
 use crate::process::{
-    captured_command, display_command, ensure_success, inherited_command, perry_check_args,
-    perry_compile_args, perry_dev_args,
+    captured_command, captured_command_with_env, display_command, ensure_success,
+    inherited_command, inherited_command_with_env, perry_check_args, perry_compile_args,
+    perry_dev_args,
 };
+use crate::project::GameKind;
 use crate::project::{find_project_root, read_package_json};
 use crate::ui::{self, Tone};
 use anyhow::{Context, Result, bail};
@@ -24,6 +27,8 @@ struct BuildContext {
     entry: PathBuf,
     package: Value,
     target: ResolvedTarget,
+    native_profile: Option<GameKind>,
+    engine_root: Option<PathBuf>,
 }
 
 pub fn derive_output_name(explicit: Option<&str>, package: &Value, entry: &Path) -> Result<String> {
@@ -190,7 +195,18 @@ pub fn dev(
         &assets.watch_directories,
         verbose,
     );
-    let command_result = inherited_command("perry", &args, Some(&context.project_root), verbose);
+    let profile_proxy = profile_proxy(&context, true)?;
+    let environment = profile_proxy
+        .as_ref()
+        .map(CargoProfileProxy::environment)
+        .unwrap_or_default();
+    let command_result = inherited_command_with_env(
+        "perry",
+        &args,
+        Some(&context.project_root),
+        verbose,
+        environment,
+    );
     let move_result = move_new_compiler_objects(
         &context.project_root,
         &artifact.directory,
@@ -292,11 +308,15 @@ fn resolve_context(
         &capabilities,
         HostPlatform::current(),
     )?;
+    let native_profile = native_profile(&project_root, &package)?;
+    let engine_root = installed_engine_root(&project_root, &package)?;
     Ok(BuildContext {
         project_root,
         entry,
         package,
         target,
+        native_profile,
+        engine_root,
     })
 }
 
@@ -327,9 +347,67 @@ fn run_perry_compile(
             ui::paint_stderr(display_command("perry", &args), Tone::Accent)
         );
     }
+    let profile_proxy = profile_proxy(context, false)?;
+    let environment = profile_proxy
+        .as_ref()
+        .map(CargoProfileProxy::environment)
+        .unwrap_or_default();
     ui::run_with_spinner("Compiling", || {
-        captured_command("perry", &args, Some(working_directory), false)
+        captured_command_with_env("perry", &args, Some(working_directory), false, environment)
     })
+}
+
+fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<CargoProfileProxy>> {
+    let (Some(_profile), Some(engine_root)) =
+        (context.native_profile, context.engine_root.as_ref())
+    else {
+        return Ok(None);
+    };
+    if matches!(context.target.target, BuildTarget::Web | BuildTarget::Wasm) {
+        return Ok(None);
+    }
+    let mut features = read_native_features(&context.project_root)?;
+    if development && !features.iter().any(|feature| feature == "dev") {
+        features.push("dev".to_owned());
+    }
+    Ok(Some(CargoProfileProxy::new(
+        &context.project_root,
+        engine_root,
+        &features,
+    )?))
+}
+
+fn native_profile(project_root: &Path, package: &Value) -> Result<Option<GameKind>> {
+    let Some(dependency) = engine_dependency(package)? else {
+        return Ok(None);
+    };
+    if dependency.package_name != "@bornengine/engine" {
+        return Ok(None);
+    }
+    read_native_profile(project_root).map(Some)
+}
+
+fn installed_engine_root(project_root: &Path, package: &Value) -> Result<Option<PathBuf>> {
+    let Some(EngineDependency { package_name, .. }) = engine_dependency(package)? else {
+        return Ok(None);
+    };
+    if package_name != "@bornengine/engine" {
+        return Ok(None);
+    }
+    let installed = project_root.join("node_modules").join(package_name);
+    if !installed.exists() {
+        // Keep TypeScript-only workflows and Perry test doubles usable when
+        // dependencies have not yet been installed; Perry will report the
+        // missing package when it resolves the actual game entry point.
+        return Ok(None);
+    }
+    let root = installed.canonicalize().with_context(|| {
+        format!(
+            "could not find the installed BornEngine package at {}; install project dependencies first",
+            installed.display()
+        )
+    })?;
+    Ok(Some(root))
 }
 
 fn print_output(output: &std::process::Output) {

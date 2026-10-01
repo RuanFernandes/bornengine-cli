@@ -20,18 +20,27 @@ pub fn execute(cli: Cli) -> Result<i32> {
             package_manager,
             engine_version,
             engine_path,
+            game_type,
         } => project::new(
             &project_name,
             package_manager,
             engine_version,
             engine_path,
+            game_type,
             verbose,
         ),
         Commands::Init {
             package_manager,
             engine_version,
             engine_path,
-        } => project::init(package_manager, engine_version, engine_path, verbose),
+            game_type,
+        } => project::init(
+            package_manager,
+            engine_version,
+            engine_path,
+            game_type,
+            verbose,
+        ),
         Commands::Build {
             entry_file,
             name,
