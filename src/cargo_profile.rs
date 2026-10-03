@@ -280,13 +280,232 @@ pub fn run_cargo_proxy_if_requested() -> Option<i32> {
     let feature_refs = features.iter().map(String::as_str).collect::<Vec<_>>();
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     let args = args_with_profile(&args, Path::new(&engine_root), &feature_refs);
-    match Command::new(real_cargo).args(args).status() {
-        Ok(status) => Some(status.code().unwrap_or(1)),
+    match Command::new(real_cargo).args(&args).status() {
+        Ok(status) => {
+            let exit_code = status.code().unwrap_or(1);
+            if status.success() {
+                let expose_result = cargo_target_directory(&args).and_then(|target_directory| {
+                    mirror_engine_staticlib_for_perry(
+                        &args,
+                        Path::new(&engine_root),
+                        &target_directory,
+                    )
+                });
+                if let Err(error) = expose_result {
+                    eprintln!("could not expose the shared BornEngine library to Perry: {error:#}");
+                    return Some(1);
+                }
+            }
+            Some(exit_code)
+        }
         Err(error) => {
             eprintln!("could not start Cargo for the BornEngine build: {error}");
             Some(1)
         }
     }
+}
+
+fn cargo_target_directory(args: &[OsString]) -> Result<PathBuf> {
+    if let Some(directory) = option_path_arg(args, "--target-dir") {
+        return Ok(directory.to_path_buf());
+    }
+    if let Some(directory) = std::env::var_os(CARGO_TARGET_DIR) {
+        return Ok(PathBuf::from(directory));
+    }
+    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
+    resolve_cargo_target_dir(cache_dir.as_deref(), None)
+}
+
+fn mirror_engine_staticlib_for_perry(
+    args: &[OsString],
+    engine_root: &Path,
+    cargo_target_dir: &Path,
+) -> Result<()> {
+    let Some(manifest_arg) = manifest_path_arg(args) else {
+        return Ok(());
+    };
+    let manifest = if manifest_arg.is_absolute() {
+        manifest_arg.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("could not determine Cargo's working directory")?
+            .join(manifest_arg)
+    };
+    let manifest = manifest
+        .canonicalize()
+        .with_context(|| format!("could not resolve Cargo manifest {}", manifest.display()))?;
+    let engine_root = engine_root
+        .canonicalize()
+        .with_context(|| format!("could not resolve engine package {}", engine_root.display()))?;
+    if !is_engine_manifest(&manifest, &engine_root) {
+        return Ok(());
+    }
+
+    let manifest_contents = fs::read_to_string(&manifest)
+        .with_context(|| format!("could not read engine manifest {}", manifest.display()))?;
+    let manifest_config = toml::from_str::<toml::Value>(&manifest_contents)
+        .with_context(|| format!("invalid engine manifest {}", manifest.display()))?;
+    let Some(library) = manifest_config.get("lib") else {
+        return Ok(());
+    };
+    if !library
+        .get("crate-type")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|types| types.iter().any(|kind| kind.as_str() == Some("staticlib")))
+    {
+        return Ok(());
+    }
+    let library_name = library
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .context("BornEngine native manifest is missing its static library name")?;
+    if library_name.is_empty()
+        || !library_name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        bail!(
+            "invalid static library name `{library_name}` in {}",
+            manifest.display()
+        );
+    }
+
+    let profile = cargo_profile_directory(args);
+    let target = option_string_arg(args, "--target");
+    let platform = manifest
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+        .context("engine manifest has no native platform directory")?;
+    let extension = if platform == "windows"
+        || target
+            .as_deref()
+            .is_some_and(|name| name.contains("windows"))
+    {
+        "lib"
+    } else {
+        "a"
+    };
+    let archive_name = if extension == "lib" {
+        format!("{library_name}.{extension}")
+    } else {
+        format!("lib{library_name}.{extension}")
+    };
+    let mut shared_artifact_directory = cargo_target_dir.to_path_buf();
+    if let Some(target) = target.as_deref() {
+        shared_artifact_directory.push(target);
+    }
+    shared_artifact_directory.push(&profile);
+    let source = shared_artifact_directory.join(&archive_name);
+    if !source.is_file() {
+        return Ok(());
+    }
+
+    let mut perry_artifact_directory = manifest
+        .parent()
+        .context("engine manifest has no parent directory")?
+        .join("target");
+    if let Some(target) = target.as_deref() {
+        perry_artifact_directory.push(target);
+    }
+    perry_artifact_directory.push(profile);
+    let destination = perry_artifact_directory.join(archive_name);
+    mirror_file(&source, &destination)
+}
+
+fn cargo_profile_directory(args: &[OsString]) -> String {
+    if args.iter().any(|arg| arg == OsStr::new("--release")) {
+        return "release".to_owned();
+    }
+    option_string_arg(args, "--profile")
+        .map(|profile| {
+            if profile == "dev" {
+                "debug".to_owned()
+            } else {
+                profile
+            }
+        })
+        .unwrap_or_else(|| "debug".to_owned())
+}
+
+fn option_path_arg<'a>(args: &'a [OsString], option: &str) -> Option<&'a Path> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        if arg == OsStr::new(option) {
+            args.get(index + 1).map(Path::new)
+        } else {
+            arg.to_str()
+                .and_then(|arg| arg.strip_prefix(&format!("{option}=")))
+                .map(Path::new)
+        }
+    })
+}
+
+fn option_string_arg(args: &[OsString], option: &str) -> Option<String> {
+    args.iter().enumerate().find_map(|(index, arg)| {
+        if arg == OsStr::new(option) {
+            args.get(index + 1)
+                .and_then(|value| value.to_str())
+                .map(str::to_owned)
+        } else {
+            arg.to_str()
+                .and_then(|arg| arg.strip_prefix(&format!("{option}=")))
+                .map(str::to_owned)
+        }
+    })
+}
+
+fn mirror_file(source: &Path, destination: &Path) -> Result<()> {
+    if source == destination {
+        return Ok(());
+    }
+    let parent = destination
+        .parent()
+        .context("Perry static library path has no parent directory")?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "could not create Perry artifact directory {}",
+            parent.display()
+        )
+    })?;
+    let filename = destination
+        .file_name()
+        .and_then(OsStr::to_str)
+        .context("Perry static library path has no valid filename")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = parent.join(format!(
+        ".{filename}.bornengine-{}-{nonce}",
+        std::process::id()
+    ));
+    if fs::hard_link(source, &temporary).is_err() {
+        fs::copy(source, &temporary).with_context(|| {
+            format!(
+                "could not link or copy shared Cargo artifact {} to {}",
+                source.display(),
+                temporary.display()
+            )
+        })?;
+    }
+    if destination.exists() {
+        fs::remove_file(destination).with_context(|| {
+            format!(
+                "could not replace stale Perry library {}",
+                destination.display()
+            )
+        })?;
+    }
+    if let Err(error) = fs::rename(&temporary, destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| {
+            format!(
+                "could not publish shared library at Perry's expected path {}",
+                destination.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 pub struct CargoProfileProxy {
@@ -481,5 +700,95 @@ mod cargo_cache_tests {
             super::native_build_environment(false, Some(2)),
             vec![("CARGO_BUILD_JOBS".into(), "2".into())]
         );
+    }
+}
+
+#[cfg(test)]
+mod cargo_profile_artifact_tests {
+    use super::mirror_engine_staticlib_for_perry;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn shared_static_library_is_exposed_at_perrys_package_local_path() {
+        let project = tempfile::tempdir().unwrap();
+        let engine = project.path().join("node_modules/@bornengine/engine");
+        let manifest = engine.join("native/linux/Cargo.toml");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest,
+            "[package]\nname = \"bloom-linux\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"bloom_linux\"\ncrate-type = [\"staticlib\"]\n",
+        )
+        .unwrap();
+        let shared_target = project.path().join("shared-target");
+        let archive = shared_target.join("release/libbloom_linux.a");
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(&archive, b"native archive").unwrap();
+        let args = [
+            OsString::from("build"),
+            OsString::from("--release"),
+            OsString::from("--manifest-path"),
+            manifest.into_os_string(),
+        ];
+
+        mirror_engine_staticlib_for_perry(&args, &engine, &shared_target).unwrap();
+
+        let perry_archive = engine.join("native/linux/target/release/libbloom_linux.a");
+        assert_eq!(fs::read(&perry_archive).unwrap(), b"native archive");
+    }
+
+    #[test]
+    fn target_triple_and_non_release_profile_are_preserved_in_archive_path() {
+        let project = tempfile::tempdir().unwrap();
+        let engine = project.path().join("engine");
+        let manifest = engine.join("native/windows/Cargo.toml");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest,
+            "[package]\nname = \"bloom-windows\"\nversion = \"0.1.0\"\n\n[lib]\nname = \"bloom_windows\"\ncrate-type = [\"staticlib\"]\n",
+        )
+        .unwrap();
+        let shared_target = project.path().join("shared-target");
+        let archive = shared_target.join("x86_64-pc-windows-msvc/debug/bloom_windows.lib");
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(&archive, b"windows archive").unwrap();
+        let args = [
+            OsString::from("build"),
+            OsString::from("--target"),
+            OsString::from("x86_64-pc-windows-msvc"),
+            OsString::from("--manifest-path"),
+            manifest.into_os_string(),
+        ];
+
+        mirror_engine_staticlib_for_perry(&args, &engine, &shared_target).unwrap();
+
+        let perry_archive =
+            engine.join("native/windows/target/x86_64-pc-windows-msvc/debug/bloom_windows.lib");
+        assert_eq!(fs::read(perry_archive).unwrap(), b"windows archive");
+    }
+
+    #[test]
+    fn unrelated_manifest_does_not_create_a_package_local_target_directory() {
+        let project = tempfile::tempdir().unwrap();
+        let engine = project.path().join("engine");
+        fs::create_dir_all(&engine).unwrap();
+        let manifest = project.path().join("game/Cargo.toml");
+        fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        fs::write(&manifest, "[package]\nname = \"game\"\n").unwrap();
+        let args = [
+            OsString::from("build"),
+            OsString::from("--manifest-path"),
+            manifest.into_os_string(),
+        ];
+
+        mirror_engine_staticlib_for_perry(
+            &args,
+            &engine,
+            Path::new("/does/not/matter/shared-target"),
+        )
+        .unwrap();
+
+        assert!(!engine.join("native").exists());
     }
 }

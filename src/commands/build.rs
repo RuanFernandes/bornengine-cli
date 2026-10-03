@@ -34,6 +34,16 @@ struct BuildContext {
     engine_root: Option<PathBuf>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct BuildOptions<'a> {
+    pub name: Option<&'a str>,
+    pub os: Option<&'a str>,
+    pub target: Option<&'a str>,
+    pub release: bool,
+    pub jobs: Option<usize>,
+    pub verbose: bool,
+}
+
 pub fn derive_output_name(explicit: Option<&str>, package: &Value, entry: &Path) -> Result<String> {
     let name = if let Some(explicit) = explicit {
         explicit.to_owned()
@@ -61,17 +71,10 @@ pub fn validate_run_target(target: &ResolvedTarget, host: HostPlatform) -> Resul
     Ok(())
 }
 
-pub fn build(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    jobs: Option<usize>,
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn build(entry_file: &Path, options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_project_assets(&context.project_root)?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     let target_label = target_label(&context.target);
     let extension = context.target.target.output_extension();
     let artifact = begin_build(
@@ -81,7 +84,13 @@ pub fn build(
         extension,
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, false, jobs, verbose)?;
+        let output = run_perry_compile(
+            &context,
+            &artifact.output,
+            false,
+            options.jobs,
+            options.verbose,
+        )?;
         ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
@@ -110,20 +119,11 @@ pub fn build(
     Ok(0)
 }
 
-pub fn run(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    program_args: &[String],
-    release: bool,
-    jobs: Option<usize>,
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn run(entry_file: &Path, program_args: &[String], options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_run_target(&context.target, HostPlatform::current())?;
     validate_project_assets(&context.project_root)?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     let label = target_label(&context.target);
     let artifact = begin_build(
         &context.project_root,
@@ -132,7 +132,13 @@ pub fn run(
         context.target.target.output_extension(),
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, !release, jobs, verbose)?;
+        let output = run_perry_compile(
+            &context,
+            &artifact.output,
+            !options.release,
+            options.jobs,
+            options.verbose,
+        )?;
         ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
@@ -151,33 +157,22 @@ pub fn run(
         artifact.output.to_string_lossy().as_ref(),
         &args,
         Some(&context.project_root),
-        verbose,
+        options.verbose,
     )
 }
 
-pub fn dev(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    watch: bool,
-    release: bool,
-    jobs: Option<usize>,
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn dev(entry_file: &Path, watch: bool, options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_run_target(&context.target, HostPlatform::current())?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     if !watch {
         return run(
             entry_file,
-            Some(&output_name),
-            os,
-            exact_target,
             &[],
-            release,
-            jobs,
-            verbose,
+            BuildOptions {
+                name: Some(&output_name),
+                ..options
+            },
         );
     }
     let assets = validate_project_assets(&context.project_root)?;
@@ -198,10 +193,10 @@ pub fn dev(
         &context.entry,
         &artifact.output,
         &assets.watch_directories,
-        verbose,
+        options.verbose,
     );
-    let profile_proxy = profile_proxy(&context, !release)?;
-    let mut environment = native_build_environment(!release, jobs);
+    let profile_proxy = profile_proxy(&context, !options.release)?;
+    let mut environment = native_build_environment(!options.release, options.jobs);
     if let Some(profile_proxy) = profile_proxy.as_ref() {
         environment.extend_from_slice(profile_proxy.environment());
     } else if is_native_target(&context.target) {
@@ -211,7 +206,7 @@ pub fn dev(
         "perry",
         &args,
         Some(&context.project_root),
-        verbose,
+        options.verbose,
         &environment,
     );
     let move_result = move_new_compiler_objects(
