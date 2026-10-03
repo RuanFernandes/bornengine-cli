@@ -683,11 +683,9 @@ mod cargo_cache_tests {
     fn default_target_directory_uses_a_machine_wide_cache_root() {
         let cache_dir = Path::new("/user/cache");
         let resolved = resolve_cargo_target_dir(Some(cache_dir), None).unwrap();
+        let expected = cache_dir.join("BornEngine").join("cargo-target");
 
-        assert_eq!(
-            resolved,
-            PathBuf::from("/user/cache/BornEngine/cargo-target")
-        );
+        assert_eq!(resolved, expected);
     }
 
     #[test]
@@ -705,33 +703,32 @@ mod cargo_cache_tests {
 
     #[test]
     fn relative_target_directory_is_anchored_to_the_project_root() {
-        let project_root = Path::new("/games/MyGame");
+        let project_root = std::env::temp_dir().join("games").join("MyGame");
+        let expected = project_root.join("../shared-cache");
         let target_dir = resolve_cargo_target_dir_from(
             None,
             Some(OsString::from("../shared-cache")),
-            project_root,
+            &project_root,
         )
         .unwrap();
 
-        assert_eq!(target_dir, PathBuf::from("/games/MyGame/../shared-cache"));
+        assert_eq!(target_dir, expected);
     }
 
     #[test]
     fn relative_target_directory_is_passed_as_absolute_to_subprocesses() {
-        let project_root = Path::new("/games/MyGame");
+        let project_root = std::env::temp_dir().join("games").join("MyGame");
+        let expected = project_root.join("../shared-cache").into_os_string();
         let environment = super::cargo_target_dir_env_from(
             None,
             Some(OsString::from("../shared-cache")),
-            project_root,
+            &project_root,
         )
         .unwrap();
 
         assert_eq!(environment.len(), 1);
         assert_eq!(environment[0].0, "CARGO_TARGET_DIR");
-        assert_eq!(
-            environment[0].1,
-            PathBuf::from("/games/MyGame/../shared-cache").into_os_string()
-        );
+        assert_eq!(environment[0].1, expected);
     }
 
     #[test]
@@ -743,11 +740,16 @@ mod cargo_cache_tests {
 
     #[test]
     fn cargo_proxy_receives_the_default_target_directory_when_unset() {
-        let env = cargo_target_dir_env(Some(Path::new("/user/cache")), None).unwrap();
+        let cache_dir = Path::new("/user/cache");
+        let expected = cache_dir
+            .join("BornEngine")
+            .join("cargo-target")
+            .into_os_string();
+        let env = cargo_target_dir_env(Some(cache_dir), None).unwrap();
 
         assert_eq!(env.len(), 1);
         assert_eq!(env[0].0, "CARGO_TARGET_DIR");
-        assert_eq!(env[0].1, "/user/cache/BornEngine/cargo-target");
+        assert_eq!(env[0].1, expected);
     }
 
     #[test]
