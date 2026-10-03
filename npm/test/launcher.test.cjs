@@ -41,7 +41,17 @@ test('honors BORNENGINE_CLI_CACHE_DIR for the binary cache location', (t) => {
 
   assert.equal(
     defaultCacheDirectory('linux', { BORNENGINE_CLI_CACHE_DIR: '/tmp/bornengine-cache' }, '/home/test'),
-    '/tmp/bornengine-cache',
+    path.resolve('/tmp/bornengine-cache'),
+  );
+});
+
+test('finds a release checksum when the manifest path includes its staging directory', (t) => {
+  const { checksumFor } = requireLauncher(t);
+  const expected = 'a'.repeat(64);
+
+  assert.equal(
+    checksumFor(`${expected}  dist/bornengine-linux-x86_64\n`, 'bornengine-linux-x86_64'),
+    expected,
   );
 });
 

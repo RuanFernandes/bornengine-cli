@@ -106,7 +106,8 @@ async function fetchAsset(url, fetchImpl) {
 function checksumFor(manifest, assetName) {
   for (const line of manifest.split(/\r?\n/)) {
     const match = line.trim().match(/^([a-fA-F0-9]{64})\s+\*?(.+)$/);
-    if (match && match[2] === assetName) return match[1].toLowerCase();
+    const manifestAssetName = match?.[2].split(/[\\/]/).pop();
+    if (manifestAssetName === assetName) return match[1].toLowerCase();
   }
   throw new Error(`SHA256SUMS does not contain a checksum for ${assetName}.`);
 }
