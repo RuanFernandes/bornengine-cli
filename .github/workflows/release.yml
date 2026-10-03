@@ -82,6 +82,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Generate SHA-256 manifest
+        run: sha256sum dist/bornengine-* > dist/SHA256SUMS
       - name: Create release and upload binaries
         env:
           GH_TOKEN: ${{ github.token }}

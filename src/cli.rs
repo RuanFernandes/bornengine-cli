@@ -26,14 +26,22 @@ fn parse_native_feature(value: &str) -> Result<String, String> {
 #[command(
     name = "bornengine",
     version,
-    about = "Create and manage BornEngine games"
+    about = "Create and manage BornEngine games",
+    arg_required_else_help = true
 )]
 pub struct Cli {
     #[arg(short, long, global = true, action = ArgAction::Count, help = "Show detailed command output")]
     pub verbose: u8,
 
+    #[arg(
+        long = "add-ai-docs",
+        value_name = "FILENAME",
+        help = "Write the BornEngine AI guide to <filename>.md in the current directory"
+    )]
+    pub add_ai_docs: Option<PathBuf>,
+
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]

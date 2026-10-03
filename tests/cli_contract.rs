@@ -16,7 +16,7 @@ fn build_accepts_name_and_user_friendly_os() {
     .unwrap();
 
     assert!(matches!(
-        cli.command,
+        cli.command.unwrap(),
         Commands::Build {
             name: Some(name),
             os: Some(os),
@@ -55,7 +55,7 @@ fn new_accepts_package_manager_and_local_engine_path() {
     .unwrap();
 
     assert!(matches!(
-        cli.command,
+        cli.command.unwrap(),
         Commands::New {
             package_manager: Some(package_manager),
             engine_path: Some(path),
@@ -75,7 +75,7 @@ fn new_accepts_each_native_game_profile() {
             Cli::try_parse_from(["bornengine", "new", "MyGame", "--game-type", kind]).unwrap();
 
         assert!(matches!(
-            cli.command,
+            cli.command.unwrap(),
             Commands::New { game_type, .. } if game_type == expected
         ));
     }
@@ -85,7 +85,7 @@ fn new_accepts_each_native_game_profile() {
 fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
     let default = Cli::try_parse_from(["bornengine", "init"]).unwrap();
     assert!(matches!(
-        default.command,
+        default.command.unwrap(),
         Commands::Init {
             game_type: bornengine_cli::project::GameKind::TwoD,
             ..
@@ -94,7 +94,7 @@ fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
 
     let explicit = Cli::try_parse_from(["bornengine", "init", "--game-type", "3d"]).unwrap();
     assert!(matches!(
-        explicit.command,
+        explicit.command.unwrap(),
         Commands::Init {
             game_type: bornengine_cli::project::GameKind::ThreeD,
             ..
@@ -109,7 +109,7 @@ fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
     ])
     .unwrap();
     assert!(matches!(
-        optional.command,
+        optional.command.unwrap(),
         Commands::Init { native_features, .. }
             if native_features == ["sqlite", "scripting"]
     ));
@@ -129,7 +129,7 @@ fn new_accepts_short_package_manager_and_engine_aliases() {
     .unwrap();
 
     assert!(matches!(
-        cli.command,
+        cli.command.unwrap(),
         Commands::New {
             package_manager: Some(package_manager),
             engine_path: Some(path),
@@ -142,7 +142,7 @@ fn new_accepts_short_package_manager_and_engine_aliases() {
 fn create_is_available_as_a_separate_interactive_command() {
     let cli = Cli::try_parse_from(["bornengine", "create"]).unwrap();
 
-    assert!(matches!(cli.command, Commands::Create));
+    assert!(matches!(cli.command.unwrap(), Commands::Create));
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn tiled_import_command_accepts_map_and_output_paths() {
     .unwrap();
 
     assert!(matches!(
-        cli.command,
+        cli.command.unwrap(),
         Commands::Import { command } if matches!(&command,
             bornengine_cli::cli::ImportCommands::Tiled { map_file, output }
             if map_file.as_path() == Path::new("maps/level.tmx") && output.as_path() == Path::new("world/level.world2d.json"))
@@ -175,7 +175,7 @@ fn tiled_import_command_accepts_map_and_output_paths() {
 fn asset_validate_and_pack_commands_accept_project_and_output() {
     let validate = Cli::try_parse_from(["bornengine", "assets", "validate", "game"]).unwrap();
     assert!(matches!(
-        validate.command,
+        validate.command.unwrap(),
         Commands::Assets { command: bornengine_cli::cli::AssetCommands::Validate { project_root: Some(path), .. } }
             if path == Path::new("game")
     ));
@@ -190,7 +190,7 @@ fn asset_validate_and_pack_commands_accept_project_and_output() {
     ])
     .unwrap();
     assert!(matches!(
-        pack.command,
+        pack.command.unwrap(),
         Commands::Assets { command: bornengine_cli::cli::AssetCommands::Pack { project_root: Some(root), output } }
             if root == Path::new("game") && output == Path::new("game/.bornengine/assets")
     ));
@@ -217,7 +217,7 @@ fn asset_validate_parses_report_flags() {
     ])
     .unwrap();
     assert!(matches!(
-        cli.command,
+        cli.command.unwrap(),
         Commands::Assets {
             command: bornengine_cli::cli::AssetCommands::Validate {
                 json: true,
@@ -258,7 +258,7 @@ fn cargo_cache_path_command_is_available_without_a_project() {
     let parsed = Cli::try_parse_from(["bornengine", "cache", "path"]);
 
     assert!(matches!(
-        parsed.unwrap().command,
+        parsed.unwrap().command.unwrap(),
         Commands::Cache {
             command: bornengine_cli::cli::CacheCommands::Path
         }
@@ -270,7 +270,7 @@ fn cargo_cache_warm_accepts_profile_and_job_options() {
     let parsed = Cli::try_parse_from(["bornengine", "cache", "warm", "--release", "--jobs", "3"]);
 
     assert!(matches!(
-        parsed.unwrap().command,
+        parsed.unwrap().command.unwrap(),
         Commands::Cache {
             command: bornengine_cli::cli::CacheCommands::Warm {
                 release: true,
@@ -289,11 +289,11 @@ fn native_build_commands_accept_jobs_and_fast_or_release_profiles() {
         Cli::try_parse_from(["bornengine", "dev", "main.ts", "--release", "--jobs", "3"]).unwrap();
 
     assert!(matches!(
-        build.command,
+        build.command.unwrap(),
         Commands::Build { jobs: Some(4), .. }
     ));
     assert!(matches!(
-        run.command,
+        run.command.unwrap(),
         Commands::Run {
             release: true,
             jobs: Some(2),
@@ -301,7 +301,7 @@ fn native_build_commands_accept_jobs_and_fast_or_release_profiles() {
         }
     ));
     assert!(matches!(
-        dev.command,
+        dev.command.unwrap(),
         Commands::Dev {
             release: true,
             jobs: Some(3),
@@ -333,7 +333,7 @@ fn new_accepts_only_known_optional_native_features() {
     ])
     .unwrap();
     assert!(matches!(
-        parsed.command,
+        parsed.command.unwrap(),
         Commands::New { native_features, .. }
             if native_features == ["sqlite", "scripting"]
     ));

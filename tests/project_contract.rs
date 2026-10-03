@@ -23,6 +23,9 @@ fn creates_small_game_project_with_pinned_engine_and_perry_allowlist() {
     assert!(project.join("main.ts").is_file());
     assert!(project.join(".gitignore").is_file());
     assert!(project.join("README.md").is_file());
+    let ai_guide = fs::read_to_string(project.join("AGENTS.md")).unwrap();
+    assert!(ai_guide.starts_with("# BornEngine — AI context reference for language models"));
+    assert!(ai_guide.contains("Do not pass `Game` to assets."));
 
     let package: Value =
         serde_json::from_slice(&fs::read(project.join("package.json")).unwrap()).unwrap();
@@ -196,6 +199,15 @@ fn init_refuses_a_conflicting_file_without_overwriting_it() {
         "{\"name\":\"my-app\"}"
     );
     assert!(!root.path().join("main.ts").exists());
+}
+
+#[test]
+fn init_does_not_add_the_new_project_ai_guide_to_existing_directories() {
+    let root = tempfile::tempdir().unwrap();
+
+    initialize_project(root.path(), "ExistingGame", &release_spec()).unwrap();
+
+    assert!(!root.path().join("AGENTS.md").exists());
 }
 
 #[test]

@@ -5,8 +5,7 @@ use std::time::Duration;
 
 const RELEASES_URL: &str =
     "https://api.github.com/repos/RuanFernandes/bornengine-cli/releases/latest";
-const INSTALL_COMMAND: &str =
-    "cargo install --git https://github.com/RuanFernandes/bornengine-cli --force";
+const INSTALL_COMMAND: &str = "npm install --global @bornengine/cli";
 
 pub fn check() -> Result<i32> {
     let current = env!("CARGO_PKG_VERSION");

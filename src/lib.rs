@@ -1,3 +1,4 @@
+pub mod ai_docs;
 pub mod build_artifacts;
 pub mod cargo_profile;
 pub mod cli;
