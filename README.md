@@ -40,6 +40,8 @@ bornengine run main.ts
 | `bornengine import tiled <map.tmx> --output <world.world2d.json>` | Convert an orthogonal Tiled map to BornEngine's versioned world format. |
 | `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
 | `bornengine assets pack [project-root] --output <directory>` | Copy project assets and write a deterministic SHA-256 manifest. |
+| `bornengine script check [--manifest <path>]` | Validate a self-contained JavaScript behavior package. |
+| `bornengine script pack --output <directory> [--manifest <path>]` | Write the declared script entry and package manifest to a dedicated output directory. |
 | `bornengine clean` | Remove only build files recorded by this CLI. |
 | `bornengine doctor` | Check Perry, Rust, the package manager, the project, and host prerequisites. |
 | `bornengine info` / `version` | Show CLI, engine, Perry, project, and host details. |
@@ -70,6 +72,8 @@ bornengine cache warm --jobs 4
 bornengine import tiled maps/level.tmx --output worlds/level.world2d.json
 bornengine assets validate
 bornengine assets pack --output dist/game
+bornengine script check
+bornengine script pack --output dist/scripts/player
 bornengine config set package-manager pnpm
 ```
 
@@ -169,6 +173,23 @@ Diagnostics are sorted by path, code, severity, message, measured value, and lim
 `assets pack` continues to copy the same deterministic file inventory and write a `bornengine-assets-v1` manifest. Audit warnings do not change the default pack output. Build and run still fail on hard validation errors or configured error diagnostics before packing.
 
 For the browsable command reference and configuration guide, see [Asset audit in the BornEngine documentation](https://ruanfernandes.github.io/BornEngine/docs/cli/assets/).
+
+## Script behavior packages
+
+Place a `bornengine.script.json` at the package root:
+
+```json
+{
+  "format": "bornengine-script-v1",
+  "apiVersion": 1,
+  "entry": "scripts/player.js",
+  "permissions": ["log", "self.read"]
+}
+```
+
+The `entry` must be a regular UTF-8 `.js` or `.mjs` file inside the package, no larger than 1 MiB. Permissions must be sorted, unique, and selected from `log`, `self.particles.emit`, `self.read`, and `self.transform.write`. `script check` parses the module without executing JavaScript. It rejects source deeper than 128 delimiter levels or with more than 128 recursive syntax steps in an expression chain. Flat array and object entries remain allowed within the 1 MiB source limit. Static imports, re-exports from another module, and dynamic imports are rejected because v1 has no module loader. The input manifest, any previous packed manifest, and the pack ownership marker are each limited to 64 KiB. `script pack` applies the same checks, then writes the declared entry, manifest, and `.bornengine-pack.json` ownership marker. The marker records hashes of both package files. Use an empty output directory or one previously created by this command; a separately authored package, changed packaged file, symbolic link, or untracked content is never replaced. Repeated packs produce the same output bytes. The pack summary counts all three output files.
+
+The pre-parse guard may conservatively reject rare valid JavaScript: a long regex literal where `/` is ambiguous (such as after `else`), or more than 128 semicolon-free statements that accumulate the chain budget. Use `RegExp(...)` for such patterns and explicit semicolons between statements.
 
 ## Troubleshooting
 

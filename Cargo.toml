@@ -21,6 +21,9 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+boa_ast = "=0.20.0"
+boa_interner = "=0.20.0"
+boa_parser = "=0.20.0"
 clap = { version = "4.5", features = ["derive"] }
 console = "0.16"
 dialoguer = { version = "0.12", default-features = false }

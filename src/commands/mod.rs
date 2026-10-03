@@ -7,9 +7,10 @@ pub mod diagnostics;
 pub mod engine;
 pub mod import;
 pub mod project;
+pub mod scripts;
 pub mod update;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, ScriptCommands};
 use anyhow::Result;
 
 pub fn execute(cli: Cli) -> Result<i32> {
@@ -170,6 +171,26 @@ pub fn execute(cli: Cli) -> Result<i32> {
                 let summary = assets::pack_project(&root, &output)?;
                 println!(
                     "Packed {} assets ({} bytes) to {}",
+                    summary.files,
+                    summary.bytes,
+                    output.display()
+                );
+                Ok(0)
+            }
+        },
+        Commands::Script { command } => match command {
+            ScriptCommands::Check { manifest } => {
+                let package = scripts::check_package(manifest.as_deref())?;
+                println!(
+                    "Script package is valid (API {}, entry `{}`)",
+                    package.api_version, package.entry
+                );
+                Ok(0)
+            }
+            ScriptCommands::Pack { output, manifest } => {
+                let summary = scripts::pack_package(manifest.as_deref(), &output)?;
+                println!(
+                    "Packed {} script package files ({} bytes) to {}",
                     summary.files,
                     summary.bytes,
                     output.display()

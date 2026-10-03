@@ -229,6 +229,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AssetCommands,
     },
+    /// Validate or package a self-contained JavaScript behavior.
+    Script {
+        #[command(subcommand)]
+        command: ScriptCommands,
+    },
     /// Check TypeScript compatibility without creating a binary.
     Check {
         #[arg(help = "TypeScript entry file")]
@@ -285,6 +290,32 @@ pub enum AssetCommands {
         project_root: Option<PathBuf>,
         #[arg(long, required = true, help = "Directory where assets will be copied")]
         output: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ScriptCommands {
+    /// Validate a BornEngine JavaScript behavior package.
+    Check {
+        #[arg(
+            long,
+            help = "Path to bornengine.script.json (defaults to the current directory)"
+        )]
+        manifest: Option<PathBuf>,
+    },
+    /// Package one validated JavaScript behavior for runtime loading.
+    Pack {
+        #[arg(
+            long,
+            required = true,
+            help = "Directory where the script package will be written"
+        )]
+        output: PathBuf,
+        #[arg(
+            long,
+            help = "Path to bornengine.script.json (defaults to the current directory)"
+        )]
+        manifest: Option<PathBuf>,
     },
 }
 
