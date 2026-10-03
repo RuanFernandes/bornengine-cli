@@ -1,7 +1,6 @@
 use crate::cargo_profile::{
-    args_with_profile, cargo_target_dir_environment_from, effective_cargo_target_dir,
-    effective_cargo_target_dir_from, native_build_environment, read_native_features,
-    read_native_profile,
+    args_with_profile, cargo_target_dir_environment_from, effective_cargo_target_dir_from,
+    native_build_environment, read_native_features, read_native_profile,
 };
 use crate::cli::CacheCommands;
 use crate::engine::{EngineDependency, engine_dependency};
@@ -16,11 +15,17 @@ use std::path::{Path, PathBuf};
 pub fn execute(command: CacheCommands, verbose: bool) -> Result<i32> {
     match command {
         CacheCommands::Path => {
-            println!("{}", effective_cargo_target_dir()?.display());
+            let cwd = std::env::current_dir().context("could not determine current directory")?;
+            let base_dir = cache_path_base_dir(&cwd)?;
+            println!("{}", effective_cargo_target_dir_from(&base_dir)?.display());
             Ok(0)
         }
         CacheCommands::Warm { release, jobs } => warm(release, jobs, verbose),
     }
+}
+
+fn cache_path_base_dir(start: &Path) -> Result<PathBuf> {
+    Ok(find_project_root(start)?.unwrap_or_else(|| start.to_path_buf()))
 }
 
 pub fn native_manifest_path(engine_root: &Path, host: HostPlatform) -> Result<PathBuf> {
@@ -109,7 +114,7 @@ fn installed_engine_root(project_root: &Path, dependency: &EngineDependency) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::native_manifest_path;
+    use super::{cache_path_base_dir, native_manifest_path};
     use crate::platform::HostPlatform;
     use std::fs;
 
@@ -135,5 +140,26 @@ mod tests {
         let error = native_manifest_path(root.path(), HostPlatform::Other).unwrap_err();
 
         assert!(error.to_string().contains("Web/WASM"));
+    }
+
+    #[test]
+    fn cache_path_uses_the_project_root_from_a_nested_directory() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"dependencies":{"@bornengine/engine":"0.13.0"}}"#,
+        )
+        .unwrap();
+        let nested = root.path().join("src/scripts");
+        fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(cache_path_base_dir(&nested).unwrap(), root.path());
+    }
+
+    #[test]
+    fn cache_path_uses_the_current_directory_outside_a_project() {
+        let root = tempfile::tempdir().unwrap();
+
+        assert_eq!(cache_path_base_dir(root.path()).unwrap(), root.path());
     }
 }

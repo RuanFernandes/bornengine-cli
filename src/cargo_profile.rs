@@ -13,11 +13,6 @@ const PROXY_REAL_CARGO: &str = "BORNENGINE_CARGO_PROXY_REAL";
 const PROXY_FEATURES: &str = "BORNENGINE_CARGO_PROXY_FEATURES";
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 
-pub fn effective_cargo_target_dir() -> Result<PathBuf> {
-    let cwd = std::env::current_dir().context("could not determine current directory")?;
-    effective_cargo_target_dir_from(&cwd)
-}
-
 pub fn effective_cargo_target_dir_from(base_dir: &Path) -> Result<PathBuf> {
     let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
     resolve_cargo_target_dir_from(
