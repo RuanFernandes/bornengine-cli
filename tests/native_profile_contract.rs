@@ -38,6 +38,40 @@ fn user_features_are_added_to_the_selected_profile_without_replacing_it() {
 }
 
 #[test]
+fn sqlite_and_scripting_are_added_to_all_supported_profiles() {
+    for (profile, expected) in [
+        ("2d", ["mp3", "sqlite", "scripting"].as_slice()),
+        (
+            "2.5d",
+            ["mp3", "models3d", "image-extras", "sqlite", "scripting"].as_slice(),
+        ),
+        (
+            "3d",
+            [
+                "mp3",
+                "jolt",
+                "models3d",
+                "image-extras",
+                "sqlite",
+                "scripting",
+            ]
+            .as_slice(),
+        ),
+    ] {
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join("perry.toml"),
+            format!(
+                "[bornengine]\nnative_profile = \"{profile}\"\nnative_features = [\"sqlite\", \"scripting\"]\n"
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(read_native_features(project.path()).unwrap(), expected);
+    }
+}
+
+#[test]
 fn all_native_profiles_resolve_to_the_documented_cargo_features() {
     let profiles: [(&str, &[&str]); 3] = [
         ("2d", &["mp3"]),

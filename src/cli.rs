@@ -3,6 +3,25 @@ use crate::project::GameKind;
 use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
+fn parse_positive_jobs(value: &str) -> Result<usize, String> {
+    let jobs = value
+        .parse::<usize>()
+        .map_err(|_| "jobs must be a positive integer".to_owned())?;
+    if jobs == 0 {
+        return Err("jobs must be a positive integer".to_owned());
+    }
+    Ok(jobs)
+}
+
+fn parse_native_feature(value: &str) -> Result<String, String> {
+    match value {
+        "sqlite" | "scripting" => Ok(value.to_owned()),
+        _ => Err(format!(
+            "unsupported BornEngine native feature `{value}`; supported features: sqlite, scripting"
+        )),
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "bornengine",
@@ -48,6 +67,13 @@ pub enum Commands {
             help = "BornEngine native Rust profile for the new game (2d, 2.5d, or 3d)"
         )]
         game_type: GameKind,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_parser = parse_native_feature,
+            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+        )]
+        native_features: Vec<String>,
     },
     /// Initialize a BornEngine game in the current directory.
     Init {
@@ -74,6 +100,13 @@ pub enum Commands {
             help = "BornEngine native Rust profile for this game (2d, 2.5d, or 3d)"
         )]
         game_type: GameKind,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_parser = parse_native_feature,
+            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+        )]
+        native_features: Vec<String>,
     },
     /// Compile a game for a platform.
     Build {
@@ -94,6 +127,8 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
     },
     /// Compile and run a game for the current host.
     Run {
@@ -114,6 +149,13 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+        #[arg(
+            long,
+            help = "Build an optimized native executable instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
         #[arg(last = true, allow_hyphen_values = true)]
         program_args: Vec<String>,
     },
@@ -138,6 +180,13 @@ pub enum Commands {
         target: Option<String>,
         #[arg(long, help = "Watch source files and restart after changes")]
         watch: bool,
+        #[arg(
+            long,
+            help = "Build an optimized native executable instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
     },
     /// Remove build files recorded by BornEngine CLI.
     Clean,
@@ -164,6 +213,11 @@ pub enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+    /// Inspect or precompile shared native build artifacts.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommands,
     },
     /// Import maps from external authoring tools.
     Import {
@@ -258,4 +312,20 @@ pub enum ConfigCommands {
     Get { key: String },
     /// List all global configuration values.
     List,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CacheCommands {
+    /// Print the effective shared Cargo target directory.
+    Path,
+    /// Precompile BornEngine's native Rust library for this project.
+    Warm {
+        #[arg(
+            long,
+            help = "Warm the optimized release profile instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
+    },
 }

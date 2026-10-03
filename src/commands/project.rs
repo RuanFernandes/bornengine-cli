@@ -16,6 +16,7 @@ pub fn new(
     engine_version: Option<String>,
     engine_path: Option<PathBuf>,
     game_type: GameKind,
+    native_features: Vec<String>,
     verbose: bool,
 ) -> Result<i32> {
     validate_project_name(project_name)?;
@@ -34,6 +35,7 @@ pub fn new(
         &root,
         &config,
         game_type,
+        native_features,
     )?;
 
     println!(
@@ -55,6 +57,7 @@ pub fn init(
     engine_version: Option<String>,
     engine_path: Option<PathBuf>,
     game_type: GameKind,
+    native_features: Vec<String>,
     verbose: bool,
 ) -> Result<i32> {
     let root = std::env::current_dir()
@@ -76,6 +79,7 @@ pub fn init(
         &root,
         &config,
         game_type,
+        native_features,
     )?;
 
     println!(
@@ -125,6 +129,7 @@ pub fn resolve_project_spec(
     project_root: &Path,
     config: &Config,
     game_kind: GameKind,
+    native_features: Vec<String>,
 ) -> Result<ProjectSpec> {
     let environment_path = std::env::var_os("BORNENGINE_PATH").map(PathBuf::from);
     if let Some(path) = explicit_path.or(environment_path.as_deref()) {
@@ -133,6 +138,7 @@ pub fn resolve_project_spec(
             engine_package: dependency.package_name,
             engine_spec: dependency.spec,
             game_kind,
+            native_features,
         });
     }
     let requested = explicit_version.unwrap_or(&config.engine_version);
@@ -141,6 +147,7 @@ pub fn resolve_project_spec(
         engine_package: release.package_name,
         engine_spec: release.version,
         game_kind,
+        native_features,
     })
 }
 

@@ -185,6 +185,7 @@ fn generated_starter_uses_game_subclass_and_passes_asset_validation() {
             engine_package: "@bornengine/engine".to_owned(),
             engine_spec: "0.10.0".to_owned(),
             game_kind: bornengine_cli::project::GameKind::TwoD,
+            native_features: Vec::new(),
         },
     )
     .unwrap();

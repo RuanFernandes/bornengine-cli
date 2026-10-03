@@ -65,6 +65,7 @@ pub struct ProjectSpec {
     pub engine_package: String,
     pub engine_spec: String,
     pub game_kind: GameKind,
+    pub native_features: Vec<String>,
 }
 
 pub fn create_project(parent: &Path, project_name: &str, spec: &ProjectSpec) -> Result<PathBuf> {
@@ -241,9 +242,20 @@ fn generated_perry_toml(package_name: &str, spec: &ProjectSpec) -> String {
     let mut config = format!("[project]\nname = \"{package_name}\"\nentry = \"main.ts\"\n");
     if spec.engine_package == "@bornengine/engine" {
         config.push_str(&format!(
-            "\n[bornengine]\nnative_profile = \"{}\"\n",
+            "\n[bornengine]\nnative_profile = \"{}\"",
             spec.game_kind.native_profile()
         ));
+        if !spec.native_features.is_empty() {
+            config.push_str(&format!(
+                "\nnative_features = [{}]",
+                spec.native_features
+                    .iter()
+                    .map(|feature| format!("\"{feature}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        config.push('\n');
     }
     config
 }
@@ -257,6 +269,16 @@ fn validate_spec(spec: &ProjectSpec) -> Result<()> {
     }
     if spec.engine_spec.trim().is_empty() {
         bail!("engine dependency specification cannot be empty");
+    }
+    for feature in &spec.native_features {
+        if !matches!(feature.as_str(), "sqlite" | "scripting") {
+            bail!(
+                "unsupported BornEngine native feature `{feature}`; supported features: sqlite, scripting"
+            );
+        }
+    }
+    if !spec.native_features.is_empty() && spec.engine_package != "@bornengine/engine" {
+        bail!("optional native features can only be used with @bornengine/engine");
     }
     Ok(())
 }

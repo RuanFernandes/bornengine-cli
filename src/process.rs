@@ -1,8 +1,12 @@
 use crate::platform::ResolvedTarget;
 use anyhow::{Context, Result, bail};
 use std::ffi::{OsStr, OsString};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::thread;
+
+const MAX_CAPTURE_BYTES_PER_STREAM: usize = 1024 * 1024;
 
 pub fn perry_compile_args(
     entry: &Path,
@@ -124,6 +128,108 @@ pub fn captured_command_with_env(
     command.output().with_context(|| {
         format!("could not start `{program}`; make sure it is installed and on PATH")
     })
+}
+
+pub fn streamed_command_with_env(
+    program: &str,
+    args: &[OsString],
+    cwd: Option<&Path>,
+    verbose: bool,
+    envs: &[(OsString, OsString)],
+) -> Result<Output> {
+    let mut command = Command::new(program_for_spawn(program));
+    configure_child_linkers(&mut command);
+    command
+        .args(args)
+        .envs(envs.iter().cloned())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    if verbose {
+        eprintln!("{}", display_command(program, args));
+    }
+    let mut child = command.spawn().with_context(|| {
+        format!("could not start `{program}`; make sure it is installed and on PATH")
+    })?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("could not capture compiler stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("could not capture compiler stderr")?;
+    let stdout_reader = thread::spawn(move || stream_pipe(stdout, io::stdout()));
+    let stderr_reader = thread::spawn(move || stream_pipe(stderr, io::stderr()));
+    let status = child
+        .wait()
+        .with_context(|| format!("could not wait for `{program}`"))?;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("compiler stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("compiler stderr reader panicked"))??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn stream_pipe<R: Read, W: Write>(mut reader: R, mut writer: W) -> Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    let mut write_error = None;
+    loop {
+        let count = reader
+            .read(&mut buffer)
+            .context("could not read compiler output")?;
+        if count == 0 {
+            break;
+        }
+        capture_tail(&mut captured, &buffer[..count]);
+        if write_error.is_none() {
+            if let Err(error) = writer
+                .write_all(&buffer[..count])
+                .and_then(|_| writer.flush())
+            {
+                write_error = Some(error);
+            }
+        }
+    }
+    if let Some(error) = write_error {
+        return Err(error).context("could not write compiler output to the terminal");
+    }
+    Ok(captured)
+}
+
+fn capture_tail(captured: &mut Vec<u8>, chunk: &[u8]) {
+    if chunk.len() >= MAX_CAPTURE_BYTES_PER_STREAM {
+        captured.clear();
+        captured.extend_from_slice(&chunk[chunk.len() - MAX_CAPTURE_BYTES_PER_STREAM..]);
+        return;
+    }
+    let overflow = captured
+        .len()
+        .saturating_add(chunk.len())
+        .saturating_sub(MAX_CAPTURE_BYTES_PER_STREAM);
+    if overflow > 0 {
+        captured.drain(..overflow);
+    }
+    captured.extend_from_slice(chunk);
+}
+
+pub fn ensure_streamed_success(program: &str, output: &Output) -> Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+    bail!(
+        "`{program}` exited with status {}; compiler output was streamed above",
+        output.status
+    );
 }
 
 pub fn inherited_command(

@@ -1,16 +1,19 @@
 use crate::build_artifacts::{
     begin_build, begin_dev_build, clean_build_artifacts, record_build_files,
 };
-use crate::cargo_profile::{CargoProfileProxy, read_native_features, read_native_profile};
+use crate::cargo_profile::{
+    CargoProfileProxy, cargo_target_dir_environment_from, native_build_environment,
+    read_native_features, read_native_profile,
+};
 use crate::commands::assets::{pack_project, validate_project_assets};
 use crate::engine::{EngineDependency, engine_dependency};
 use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
 };
 use crate::process::{
-    captured_command, captured_command_with_env, display_command, ensure_success,
-    inherited_command, inherited_command_with_env, perry_check_args, perry_compile_args,
-    perry_dev_args,
+    captured_command, display_command, ensure_streamed_success, ensure_success, inherited_command,
+    inherited_command_with_env, perry_check_args, perry_compile_args, perry_dev_args,
+    streamed_command_with_env,
 };
 use crate::project::GameKind;
 use crate::project::{find_project_root, read_package_json};
@@ -29,6 +32,16 @@ struct BuildContext {
     target: ResolvedTarget,
     native_profile: Option<GameKind>,
     engine_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct BuildOptions<'a> {
+    pub name: Option<&'a str>,
+    pub os: Option<&'a str>,
+    pub target: Option<&'a str>,
+    pub release: bool,
+    pub jobs: Option<usize>,
+    pub verbose: bool,
 }
 
 pub fn derive_output_name(explicit: Option<&str>, package: &Value, entry: &Path) -> Result<String> {
@@ -58,16 +71,10 @@ pub fn validate_run_target(target: &ResolvedTarget, host: HostPlatform) -> Resul
     Ok(())
 }
 
-pub fn build(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn build(entry_file: &Path, options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_project_assets(&context.project_root)?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     let target_label = target_label(&context.target);
     let extension = context.target.target.output_extension();
     let artifact = begin_build(
@@ -77,8 +84,14 @@ pub fn build(
         extension,
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, verbose)?;
-        ensure_success("perry compile", &output)?;
+        let output = run_perry_compile(
+            &context,
+            &artifact.output,
+            false,
+            options.jobs,
+            options.verbose,
+        )?;
+        ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
                 "Perry completed successfully but did not create {}",
@@ -88,13 +101,10 @@ pub fn build(
         pack_project(&context.project_root, &artifact.directory)?;
         Ok(output)
     })();
-    let (output, recorded) =
+    let (_output, recorded) =
         finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     if recorded == 0 {
         bail!("Perry completed successfully without creating any build files");
-    }
-    if verbose {
-        print_output(&output);
     }
     println!("{}", ui::paint("BornEngine", Tone::Heading));
     println!(
@@ -109,18 +119,11 @@ pub fn build(
     Ok(0)
 }
 
-pub fn run(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    program_args: &[String],
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn run(entry_file: &Path, program_args: &[String], options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_run_target(&context.target, HostPlatform::current())?;
     validate_project_assets(&context.project_root)?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     let label = target_label(&context.target);
     let artifact = begin_build(
         &context.project_root,
@@ -129,8 +132,14 @@ pub fn run(
         context.target.target.output_extension(),
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, verbose)?;
-        ensure_success("perry compile", &output)?;
+        let output = run_perry_compile(
+            &context,
+            &artifact.output,
+            !options.release,
+            options.jobs,
+            options.verbose,
+        )?;
+        ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
                 "Perry completed successfully but did not create {}",
@@ -140,39 +149,30 @@ pub fn run(
         pack_project(&context.project_root, &artifact.directory)?;
         Ok(output)
     })();
-    let (output, _) = finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
-    if verbose {
-        print_output(&output);
-    }
+    let (_output, _) =
+        finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     println!("{}", ui::paint("Launching game...", Tone::Info));
     let args = program_args.iter().map(OsString::from).collect::<Vec<_>>();
     inherited_command(
         artifact.output.to_string_lossy().as_ref(),
         &args,
         Some(&context.project_root),
-        verbose,
+        options.verbose,
     )
 }
 
-pub fn dev(
-    entry_file: &Path,
-    name: Option<&str>,
-    os: Option<&str>,
-    exact_target: Option<&str>,
-    watch: bool,
-    verbose: bool,
-) -> Result<i32> {
-    let context = resolve_context(entry_file, os, exact_target, verbose)?;
+pub fn dev(entry_file: &Path, watch: bool, options: BuildOptions<'_>) -> Result<i32> {
+    let context = resolve_context(entry_file, options.os, options.target, options.verbose)?;
     validate_run_target(&context.target, HostPlatform::current())?;
-    let output_name = derive_output_name(name, &context.package, &context.entry)?;
+    let output_name = derive_output_name(options.name, &context.package, &context.entry)?;
     if !watch {
         return run(
             entry_file,
-            Some(&output_name),
-            os,
-            exact_target,
             &[],
-            verbose,
+            BuildOptions {
+                name: Some(&output_name),
+                ..options
+            },
         );
     }
     let assets = validate_project_assets(&context.project_root)?;
@@ -193,19 +193,21 @@ pub fn dev(
         &context.entry,
         &artifact.output,
         &assets.watch_directories,
-        verbose,
+        options.verbose,
     );
-    let profile_proxy = profile_proxy(&context, true)?;
-    let environment = profile_proxy
-        .as_ref()
-        .map(CargoProfileProxy::environment)
-        .unwrap_or_default();
+    let profile_proxy = profile_proxy(&context, !options.release)?;
+    let mut environment = native_build_environment(!options.release, options.jobs);
+    if let Some(profile_proxy) = profile_proxy.as_ref() {
+        environment.extend_from_slice(profile_proxy.environment());
+    } else if is_native_target(&context.target) {
+        environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
+    }
     let command_result = inherited_command_with_env(
         "perry",
         &args,
         Some(&context.project_root),
-        verbose,
-        environment,
+        options.verbose,
+        &environment,
     );
     let move_result = move_new_compiler_objects(
         &context.project_root,
@@ -335,6 +337,8 @@ fn perry_capabilities(verbose: bool) -> Result<PerryCapabilities> {
 fn run_perry_compile(
     context: &BuildContext,
     output_path: &Path,
+    development: bool,
+    jobs: Option<usize>,
     verbose: bool,
 ) -> Result<std::process::Output> {
     let args = perry_compile_args(&context.entry, output_path, &context.target, verbose);
@@ -347,14 +351,20 @@ fn run_perry_compile(
             ui::paint_stderr(display_command("perry", &args), Tone::Accent)
         );
     }
-    let profile_proxy = profile_proxy(context, false)?;
-    let environment = profile_proxy
-        .as_ref()
-        .map(CargoProfileProxy::environment)
-        .unwrap_or_default();
-    ui::run_with_spinner("Compiling", || {
-        captured_command_with_env("perry", &args, Some(working_directory), false, environment)
+    let profile_proxy = profile_proxy(context, development)?;
+    let mut environment = native_build_environment(development, jobs);
+    if let Some(profile_proxy) = profile_proxy.as_ref() {
+        environment.extend_from_slice(profile_proxy.environment());
+    } else if is_native_target(&context.target) {
+        environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
+    }
+    ui::run_with_elapsed("Compiling", || {
+        streamed_command_with_env("perry", &args, Some(working_directory), false, &environment)
     })
+}
+
+fn is_native_target(target: &ResolvedTarget) -> bool {
+    !matches!(target.target, BuildTarget::Web | BuildTarget::Wasm)
 }
 
 fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<CargoProfileProxy>> {

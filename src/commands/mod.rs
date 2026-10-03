@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod build;
+pub mod cache;
 pub mod config;
 pub mod create;
 pub mod diagnostics;
@@ -21,12 +22,14 @@ pub fn execute(cli: Cli) -> Result<i32> {
             engine_version,
             engine_path,
             game_type,
+            native_features,
         } => project::new(
             &project_name,
             package_manager,
             engine_version,
             engine_path,
             game_type,
+            native_features,
             verbose,
         ),
         Commands::Init {
@@ -34,11 +37,13 @@ pub fn execute(cli: Cli) -> Result<i32> {
             engine_version,
             engine_path,
             game_type,
+            native_features,
         } => project::init(
             package_manager,
             engine_version,
             engine_path,
             game_type,
+            native_features,
             verbose,
         ),
         Commands::Build {
@@ -46,26 +51,37 @@ pub fn execute(cli: Cli) -> Result<i32> {
             name,
             os,
             target,
+            jobs,
         } => build::build(
             &entry_file,
-            name.as_deref(),
-            os.as_deref(),
-            target.as_deref(),
-            verbose,
+            build::BuildOptions {
+                name: name.as_deref(),
+                os: os.as_deref(),
+                target: target.as_deref(),
+                release: false,
+                jobs,
+                verbose,
+            },
         ),
         Commands::Run {
             entry_file,
             name,
             os,
             target,
+            release,
+            jobs,
             program_args,
         } => build::run(
             &entry_file,
-            name.as_deref(),
-            os.as_deref(),
-            target.as_deref(),
             &program_args,
-            verbose,
+            build::BuildOptions {
+                name: name.as_deref(),
+                os: os.as_deref(),
+                target: target.as_deref(),
+                release,
+                jobs,
+                verbose,
+            },
         ),
         Commands::Dev {
             entry_file,
@@ -73,13 +89,19 @@ pub fn execute(cli: Cli) -> Result<i32> {
             os,
             target,
             watch,
+            release,
+            jobs,
         } => build::dev(
             &entry_file,
-            name.as_deref(),
-            os.as_deref(),
-            target.as_deref(),
             watch,
-            verbose,
+            build::BuildOptions {
+                name: name.as_deref(),
+                os: os.as_deref(),
+                target: target.as_deref(),
+                release,
+                jobs,
+                verbose,
+            },
         ),
         Commands::Clean => diagnostics::clean(verbose),
         Commands::Doctor => diagnostics::doctor(verbose),
@@ -91,6 +113,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         }
         Commands::Update => update::check(),
         Commands::Config { command } => config::execute(command),
+        Commands::Cache { command } => cache::execute(command, verbose),
         Commands::Import { command } => match command {
             crate::cli::ImportCommands::Tiled { map_file, output } => {
                 let project_root = std::env::current_dir()?;

@@ -100,6 +100,19 @@ fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
             ..
         }
     ));
+
+    let optional = Cli::try_parse_from([
+        "bornengine",
+        "init",
+        "--native-features",
+        "sqlite,scripting",
+    ])
+    .unwrap();
+    assert!(matches!(
+        optional.command,
+        Commands::Init { native_features, .. }
+            if native_features == ["sqlite", "scripting"]
+    ));
 }
 
 #[test]
@@ -237,4 +250,102 @@ fn top_level_help_lists_import_and_asset_management_commands() {
     let help = Cli::command().render_long_help().to_string();
     assert!(help.contains("import"), "{help}");
     assert!(help.contains("assets"), "{help}");
+    assert!(help.contains("cache"), "{help}");
+}
+
+#[test]
+fn cargo_cache_path_command_is_available_without_a_project() {
+    let parsed = Cli::try_parse_from(["bornengine", "cache", "path"]);
+
+    assert!(matches!(
+        parsed.unwrap().command,
+        Commands::Cache {
+            command: bornengine_cli::cli::CacheCommands::Path
+        }
+    ));
+}
+
+#[test]
+fn cargo_cache_warm_accepts_profile_and_job_options() {
+    let parsed = Cli::try_parse_from(["bornengine", "cache", "warm", "--release", "--jobs", "3"]);
+
+    assert!(matches!(
+        parsed.unwrap().command,
+        Commands::Cache {
+            command: bornengine_cli::cli::CacheCommands::Warm {
+                release: true,
+                jobs: Some(3)
+            }
+        }
+    ));
+}
+
+#[test]
+fn native_build_commands_accept_jobs_and_fast_or_release_profiles() {
+    let build = Cli::try_parse_from(["bornengine", "build", "main.ts", "--jobs", "4"]).unwrap();
+    let run =
+        Cli::try_parse_from(["bornengine", "run", "main.ts", "--release", "--jobs", "2"]).unwrap();
+    let dev =
+        Cli::try_parse_from(["bornengine", "dev", "main.ts", "--release", "--jobs", "3"]).unwrap();
+
+    assert!(matches!(
+        build.command,
+        Commands::Build { jobs: Some(4), .. }
+    ));
+    assert!(matches!(
+        run.command,
+        Commands::Run {
+            release: true,
+            jobs: Some(2),
+            ..
+        }
+    ));
+    assert!(matches!(
+        dev.command,
+        Commands::Dev {
+            release: true,
+            jobs: Some(3),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn native_build_commands_reject_non_positive_job_counts() {
+    for args in [
+        vec!["bornengine", "build", "main.ts", "--jobs=0"],
+        vec!["bornengine", "run", "main.ts", "--jobs=-1"],
+        vec!["bornengine", "dev", "main.ts", "--jobs=0"],
+        vec!["bornengine", "cache", "warm", "--jobs=0"],
+    ] {
+        assert!(Cli::try_parse_from(args).is_err());
+    }
+}
+
+#[test]
+fn new_accepts_only_known_optional_native_features() {
+    let parsed = Cli::try_parse_from([
+        "bornengine",
+        "new",
+        "MyGame",
+        "--native-features",
+        "sqlite,scripting",
+    ])
+    .unwrap();
+    assert!(matches!(
+        parsed.command,
+        Commands::New { native_features, .. }
+            if native_features == ["sqlite", "scripting"]
+    ));
+
+    assert!(
+        Cli::try_parse_from([
+            "bornengine",
+            "new",
+            "MyGame",
+            "--native-features",
+            "rigid-body-magic",
+        ])
+        .is_err()
+    );
 }

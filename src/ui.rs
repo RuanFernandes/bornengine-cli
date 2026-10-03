@@ -1,7 +1,7 @@
 use console::{Style, colors_enabled, colors_enabled_stderr};
 use indicatif::ProgressBar;
 use std::fmt::Display;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
 pub enum Tone {
@@ -54,6 +54,23 @@ pub fn run_with_spinner<T>(message: &'static str, operation: impl FnOnce() -> T)
     spinner.enable_steady_tick(Duration::from_millis(90));
     let result = operation();
     spinner.finish_and_clear();
+    result
+}
+
+pub fn run_with_elapsed<T>(message: &'static str, operation: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    eprintln!("{}", paint_stderr(format!("{message}..."), Tone::Info));
+    let result = operation();
+    eprintln!(
+        "{}",
+        paint_stderr(
+            format!(
+                "{message} finished in {:.1}s",
+                started.elapsed().as_secs_f64()
+            ),
+            Tone::Info
+        )
+    );
     result
 }
 
