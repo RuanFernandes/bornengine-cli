@@ -8,9 +8,9 @@ use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
 };
 use crate::process::{
-    captured_command, captured_command_with_env, display_command, ensure_success,
-    inherited_command, inherited_command_with_env, perry_check_args, perry_compile_args,
-    perry_dev_args,
+    captured_command, display_command, ensure_streamed_success, ensure_success, inherited_command,
+    inherited_command_with_env, perry_check_args, perry_compile_args, perry_dev_args,
+    streamed_command_with_env,
 };
 use crate::project::GameKind;
 use crate::project::{find_project_root, read_package_json};
@@ -78,7 +78,7 @@ pub fn build(
     )?;
     let operation = (|| {
         let output = run_perry_compile(&context, &artifact.output, verbose)?;
-        ensure_success("perry compile", &output)?;
+        ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
                 "Perry completed successfully but did not create {}",
@@ -88,13 +88,10 @@ pub fn build(
         pack_project(&context.project_root, &artifact.directory)?;
         Ok(output)
     })();
-    let (output, recorded) =
+    let (_output, recorded) =
         finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     if recorded == 0 {
         bail!("Perry completed successfully without creating any build files");
-    }
-    if verbose {
-        print_output(&output);
     }
     println!("{}", ui::paint("BornEngine", Tone::Heading));
     println!(
@@ -130,7 +127,7 @@ pub fn run(
     )?;
     let operation = (|| {
         let output = run_perry_compile(&context, &artifact.output, verbose)?;
-        ensure_success("perry compile", &output)?;
+        ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
                 "Perry completed successfully but did not create {}",
@@ -140,10 +137,8 @@ pub fn run(
         pack_project(&context.project_root, &artifact.directory)?;
         Ok(output)
     })();
-    let (output, _) = finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
-    if verbose {
-        print_output(&output);
-    }
+    let (_output, _) =
+        finish_build_artifact(&context.project_root, &artifact.directory, operation)?;
     println!("{}", ui::paint("Launching game...", Tone::Info));
     let args = program_args.iter().map(OsString::from).collect::<Vec<_>>();
     inherited_command(
@@ -352,8 +347,8 @@ fn run_perry_compile(
         .as_ref()
         .map(CargoProfileProxy::environment)
         .unwrap_or_default();
-    ui::run_with_spinner("Compiling", || {
-        captured_command_with_env("perry", &args, Some(working_directory), false, environment)
+    ui::run_with_elapsed("Compiling", || {
+        streamed_command_with_env("perry", &args, Some(working_directory), false, environment)
     })
 }
 

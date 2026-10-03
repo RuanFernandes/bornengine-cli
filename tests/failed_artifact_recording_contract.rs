@@ -2,10 +2,16 @@
 
 use serde_json::Value;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+use std::os::unix::process::CommandExt;
 
 struct CliFixture {
     project: TempDir,
@@ -35,6 +41,17 @@ impl CliFixture {
 if [ "$1" = "compile" ] && [ "$2" = "--help" ]; then
     printf 'Target platform: linux (default: native)\n'
     exit 0
+fi
+if [ "$1" = "compile" ] && [ "$PERRY_STREAM_TEST" = "1" ]; then
+    printf 'PERRY_STREAM_STARTED\n'
+    printf 'PERRY_STREAM_DIAGNOSTIC\n' >&2
+    sleep 0.5
+    exit 19
+fi
+if [ "$1" = "compile" ] && [ "$PERRY_FILL_PIPES" = "1" ]; then
+    head -c 262144 /dev/zero | tr '\\000' 'o'
+    head -c 262144 /dev/zero | tr '\\000' 'e' >&2
+    exit 19
 fi
 {
     printf 'cwd=%s\n' "$PWD"
@@ -81,6 +98,24 @@ exit 19
             command.env(name, value);
         }
         command.output().unwrap()
+    }
+
+    fn spawn_with_env(&self, arguments: &[&str], environment: &[(&str, &str)]) -> Child {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let path = std::iter::once(self.fake_perry.path().to_path_buf())
+            .chain(std::env::split_paths(&path))
+            .collect::<Vec<_>>();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_bornengine"));
+        command
+            .current_dir(self.project.path())
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("PERRY_TEST_LOG", &self.log)
+            .envs(environment.iter().copied())
+            .args(arguments)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command.process_group(0);
+        command.spawn().unwrap()
     }
 
     fn clean_and_recorded_files(&self) -> Vec<String> {
@@ -154,6 +189,101 @@ fn run_outputs_remain_recorded_when_launching_the_game_fails() {
     fixture.clean();
     for path in recorded {
         assert!(!fixture.project.path().join(path).exists());
+    }
+}
+
+#[test]
+fn native_build_streams_compiler_output_before_perry_exits_and_keeps_failure_context() {
+    let fixture = CliFixture::new(false);
+    let mut child = fixture.spawn_with_env(&["build", "main.ts"], &[("PERRY_STREAM_TEST", "1")]);
+    let stdout = BufReader::new(child.stdout.take().unwrap());
+    let stderr = child.stderr.take().unwrap();
+    let (first_line_tx, first_line_rx) = mpsc::channel();
+    let stdout_reader = thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut line = String::new();
+        if stdout.read_line(&mut line).is_ok() {
+            let _ = first_line_tx.send(line);
+        }
+        let mut remaining = Vec::new();
+        let _ = stdout.read_to_end(&mut remaining);
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut contents = Vec::new();
+        let _ = stderr.read_to_end(&mut contents);
+        contents
+    });
+
+    let first_line = first_line_rx.recv_timeout(Duration::from_millis(250));
+    let was_running_after_stream = child.try_wait().unwrap().is_none();
+    let status = wait_for_child(&mut child, Duration::from_secs(3)).unwrap();
+    stdout_reader.join().unwrap();
+    let stderr = String::from_utf8_lossy(&stderr_reader.join().unwrap()).into_owned();
+
+    assert!(
+        first_line.is_ok(),
+        "compiler output should reach stdout before the compile process exits"
+    );
+    assert!(first_line.unwrap().contains("PERRY_STREAM_STARTED"));
+    assert!(
+        was_running_after_stream,
+        "Perry should still be compiling when its first line is visible"
+    );
+    assert!(!status.success());
+    assert!(stderr.contains("PERRY_STREAM_DIAGNOSTIC"), "{stderr}");
+    assert_eq!(stderr.matches("PERRY_STREAM_DIAGNOSTIC").count(), 1);
+}
+
+#[test]
+fn native_build_drains_large_stdout_and_stderr_without_deadlock() {
+    let fixture = CliFixture::new(false);
+    let mut child = fixture.spawn_with_env(&["build", "main.ts"], &[("PERRY_FILL_PIPES", "1")]);
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let stdout_reader = thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut contents = Vec::new();
+        let _ = stdout.read_to_end(&mut contents);
+        contents
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut contents = Vec::new();
+        let _ = stderr.read_to_end(&mut contents);
+        contents
+    });
+
+    let status = wait_for_child(&mut child, Duration::from_secs(5)).unwrap();
+    let stdout = stdout_reader.join().unwrap();
+    let stderr = stderr_reader.join().unwrap();
+    assert!(!status.success());
+    assert!(
+        stdout.len() >= 262_144,
+        "only {} stdout bytes streamed",
+        stdout.len()
+    );
+    assert!(
+        stderr.len() >= 262_144,
+        "only {} stderr bytes streamed",
+        stderr.len()
+    );
+}
+
+fn wait_for_child(child: &mut Child, timeout: Duration) -> std::io::Result<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            let process_group = format!("-{}", child.id());
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", process_group.as_str()])
+                .status();
+            return child.wait();
+        }
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
