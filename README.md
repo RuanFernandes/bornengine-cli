@@ -34,6 +34,8 @@ bornengine run main.ts
 | `bornengine build <entry>` | Compile for the host or a requested target. |
 | `bornengine run <entry>` | Build and run for the current host. |
 | `bornengine dev <entry>` | Build and run once; pass `--watch` to use Perry's rebuild-and-restart loop. |
+| `bornengine cache path` | Show the shared Cargo build cache used for native builds. |
+| `bornengine cache warm` | Precompile this project's native engine into the shared cache. |
 | `bornengine check <entry>` | Run Perry's compatibility check. |
 | `bornengine import tiled <map.tmx> --output <world.world2d.json>` | Convert an orthogonal Tiled map to BornEngine's versioned world format. |
 | `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
@@ -54,19 +56,37 @@ Examples:
 
 ```sh
 bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.4.17
+bornengine new MyScriptedGame --native-features sqlite,scripting
 bornengine new MyAdventure --game-type 2.5d
 bornengine new MyWorld --game-type 3d
 bornengine init --game-type 3d
 bornengine build main.ts --name my-game --os linux
 bornengine build main.ts --target ios-simulator
 bornengine dev main.ts --watch
+bornengine run main.ts --jobs 4
+bornengine run main.ts --release
+bornengine cache path
+bornengine cache warm --jobs 4
 bornengine import tiled maps/level.tmx --output worlds/level.world2d.json
 bornengine assets validate
 bornengine assets pack --output dist/game
 bornengine config set package-manager pnpm
 ```
 
-`--game-type` accepts `2d`, `2.5d`, or `3d` and defaults to `2d`; `--kind` is an alias. It stores the profile in `[bornengine].native_profile` in `perry.toml`. During `bornengine build`, `run`, and `dev`, the CLI forwards the selected Cargo features to BornEngine's native Rust crate; `dev` also enables hot reload. It does not change builds of other Cargo packages. The 2D profile enables MP3 decoding and omits Jolt physics, 3D model loading, and extra image codecs; 2.5D adds model loading and common 3D image formats; 3D also enables Jolt. Add optional engine features such as `debug-ui` with `native_features = ["debug-ui"]` in the same `[bornengine]` table. Web currently uses the prebuilt WASM package, so these Rust profiles do not reduce the Web artifact. Edit `perry.toml` to change profiles; direct `perry compile` commands use the package's default Cargo features instead of this BornEngine CLI setting.
+`--game-type` accepts `2d`, `2.5d`, or `3d` and defaults to `2d`; `--kind` is an alias. It stores the profile in `[bornengine].native_profile` in `perry.toml`. During `bornengine build`, `run`, and `dev`, the CLI forwards the selected Cargo features to BornEngine's native Rust crate; `dev` also enables hot reload. It does not change builds of other Cargo packages. The 2D profile enables MP3 decoding and omits Jolt physics, 3D model loading, and extra image codecs; 2.5D adds model loading and common 3D image formats; 3D also enables Jolt.
+
+SQLite and embedded scripting are opt-in native features. Pass `--native-features sqlite,scripting` to `new` or `init`, or add those names to `[bornengine].native_features` in an existing project's `perry.toml`. The default project does not compile the optional native SQLite or QuickJS dependencies. `sqlite` enables native database support; `scripting` enables QuickJS where that runtime is supported. Web/WASM keeps its existing behavior and uses its prebuilt engine package. Other custom engine Cargo features, such as `debug-ui`, can be set directly in `native_features`. Direct `perry compile` commands do not read the BornEngine CLI profile.
+
+## Native build cache and development profiles
+
+The first native build for a particular engine version, Rust toolchain, target, and feature combination still compiles the Rust dependencies. The CLI streams compiler output and stores compatible Cargo artifacts in a shared per-user cache, normally `<user-cache>/BornEngine/cargo-target`; later projects can reuse those artifacts. Check the active path or override it with `CARGO_TARGET_DIR`:
+
+```sh
+bornengine cache path
+CARGO_TARGET_DIR=/mnt/fast-cache bornengine run main.ts
+```
+
+Use `bornengine cache warm` inside an installed BornEngine project to compile the selected native engine/profile before compiling the TypeScript game. It does not build or launch the game. `bornengine run` and `bornengine dev` use a faster incremental native profile by default; add `--release` for optimized output. `bornengine build` stays optimized. Add `--jobs N` to `build`, `run`, `dev`, or `cache warm` to set Cargo's parallel job count. When omitted, the CLI respects inherited `CARGO_BUILD_JOBS` and Cargo's normal scheduling. Installing the CLI does not compile engine artifacts.
 
 The package manager can be shortened to `--pm`; `--engine` aliases `--engine-path`. `-o` is the friendly OS selector, and `-n` / `--name` sets the output name. `--os` and `--target` are mutually exclusive.
 

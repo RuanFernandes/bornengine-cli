@@ -22,12 +22,14 @@ pub fn execute(cli: Cli) -> Result<i32> {
             engine_version,
             engine_path,
             game_type,
+            native_features,
         } => project::new(
             &project_name,
             package_manager,
             engine_version,
             engine_path,
             game_type,
+            native_features,
             verbose,
         ),
         Commands::Init {
@@ -35,11 +37,13 @@ pub fn execute(cli: Cli) -> Result<i32> {
             engine_version,
             engine_path,
             game_type,
+            native_features,
         } => project::init(
             package_manager,
             engine_version,
             engine_path,
             game_type,
+            native_features,
             verbose,
         ),
         Commands::Build {
@@ -47,11 +51,13 @@ pub fn execute(cli: Cli) -> Result<i32> {
             name,
             os,
             target,
+            jobs,
         } => build::build(
             &entry_file,
             name.as_deref(),
             os.as_deref(),
             target.as_deref(),
+            jobs,
             verbose,
         ),
         Commands::Run {
@@ -59,6 +65,8 @@ pub fn execute(cli: Cli) -> Result<i32> {
             name,
             os,
             target,
+            release,
+            jobs,
             program_args,
         } => build::run(
             &entry_file,
@@ -66,6 +74,8 @@ pub fn execute(cli: Cli) -> Result<i32> {
             os.as_deref(),
             target.as_deref(),
             &program_args,
+            release,
+            jobs,
             verbose,
         ),
         Commands::Dev {
@@ -74,12 +84,16 @@ pub fn execute(cli: Cli) -> Result<i32> {
             os,
             target,
             watch,
+            release,
+            jobs,
         } => build::dev(
             &entry_file,
             name.as_deref(),
             os.as_deref(),
             target.as_deref(),
             watch,
+            release,
+            jobs,
             verbose,
         ),
         Commands::Clean => diagnostics::clean(verbose),

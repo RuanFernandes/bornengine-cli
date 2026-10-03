@@ -463,10 +463,23 @@ mod cargo_cache_tests {
     }
 
     #[test]
-    fn native_development_profile_is_incremental_and_release_is_untouched() {
-        let development = super::native_build_environment(true, None);
+    fn native_development_profile_is_incremental_and_jobs_are_only_overridden_when_requested() {
+        let development = super::native_build_environment(true, Some(3));
         assert!(development.contains(&("CARGO_PROFILE_DEV_OPT_LEVEL".into(), "1".into())));
         assert!(development.contains(&("CARGO_INCREMENTAL".into(), "1".into())));
-        assert!(super::native_build_environment(false, None).is_empty());
+        assert!(development.contains(&("CARGO_BUILD_JOBS".into(), "3".into())));
+
+        let inherited_jobs = super::native_build_environment(true, None);
+        assert!(
+            !inherited_jobs
+                .iter()
+                .any(|(name, _)| name == "CARGO_BUILD_JOBS")
+        );
+        let release = super::native_build_environment(false, None);
+        assert!(release.is_empty());
+        assert_eq!(
+            super::native_build_environment(false, Some(2)),
+            vec![("CARGO_BUILD_JOBS".into(), "2".into())]
+        );
     }
 }

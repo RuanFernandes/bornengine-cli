@@ -24,6 +24,7 @@ pub fn create(verbose: bool) -> Result<i32> {
         Some(choices.engine_release.version),
         None,
         choices.game_kind,
+        Vec::new(),
         verbose,
     )
 }

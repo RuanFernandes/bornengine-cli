@@ -13,6 +13,15 @@ fn parse_positive_jobs(value: &str) -> Result<usize, String> {
     Ok(jobs)
 }
 
+fn parse_native_feature(value: &str) -> Result<String, String> {
+    match value {
+        "sqlite" | "scripting" => Ok(value.to_owned()),
+        _ => Err(format!(
+            "unsupported BornEngine native feature `{value}`; supported features: sqlite, scripting"
+        )),
+    }
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "bornengine",
@@ -58,6 +67,13 @@ pub enum Commands {
             help = "BornEngine native Rust profile for the new game (2d, 2.5d, or 3d)"
         )]
         game_type: GameKind,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_parser = parse_native_feature,
+            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+        )]
+        native_features: Vec<String>,
     },
     /// Initialize a BornEngine game in the current directory.
     Init {
@@ -84,6 +100,13 @@ pub enum Commands {
             help = "BornEngine native Rust profile for this game (2d, 2.5d, or 3d)"
         )]
         game_type: GameKind,
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_parser = parse_native_feature,
+            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+        )]
+        native_features: Vec<String>,
     },
     /// Compile a game for a platform.
     Build {
@@ -104,6 +127,8 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
     },
     /// Compile and run a game for the current host.
     Run {
@@ -124,6 +149,13 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+        #[arg(
+            long,
+            help = "Build an optimized native executable instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
         #[arg(last = true, allow_hyphen_values = true)]
         program_args: Vec<String>,
     },
@@ -148,6 +180,13 @@ pub enum Commands {
         target: Option<String>,
         #[arg(long, help = "Watch source files and restart after changes")]
         watch: bool,
+        #[arg(
+            long,
+            help = "Build an optimized native executable instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
     },
     /// Remove build files recorded by BornEngine CLI.
     Clean,

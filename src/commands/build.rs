@@ -1,7 +1,10 @@
 use crate::build_artifacts::{
     begin_build, begin_dev_build, clean_build_artifacts, record_build_files,
 };
-use crate::cargo_profile::{CargoProfileProxy, read_native_features, read_native_profile};
+use crate::cargo_profile::{
+    CargoProfileProxy, cargo_target_dir_environment, native_build_environment,
+    read_native_features, read_native_profile,
+};
 use crate::commands::assets::{pack_project, validate_project_assets};
 use crate::engine::{EngineDependency, engine_dependency};
 use crate::platform::{
@@ -63,6 +66,7 @@ pub fn build(
     name: Option<&str>,
     os: Option<&str>,
     exact_target: Option<&str>,
+    jobs: Option<usize>,
     verbose: bool,
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
@@ -77,7 +81,7 @@ pub fn build(
         extension,
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, verbose)?;
+        let output = run_perry_compile(&context, &artifact.output, false, jobs, verbose)?;
         ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
@@ -112,6 +116,8 @@ pub fn run(
     os: Option<&str>,
     exact_target: Option<&str>,
     program_args: &[String],
+    release: bool,
+    jobs: Option<usize>,
     verbose: bool,
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
@@ -126,7 +132,7 @@ pub fn run(
         context.target.target.output_extension(),
     )?;
     let operation = (|| {
-        let output = run_perry_compile(&context, &artifact.output, verbose)?;
+        let output = run_perry_compile(&context, &artifact.output, !release, jobs, verbose)?;
         ensure_streamed_success("perry compile", &output)?;
         if !artifact.output.is_file() {
             bail!(
@@ -155,6 +161,8 @@ pub fn dev(
     os: Option<&str>,
     exact_target: Option<&str>,
     watch: bool,
+    release: bool,
+    jobs: Option<usize>,
     verbose: bool,
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
@@ -167,6 +175,8 @@ pub fn dev(
             os,
             exact_target,
             &[],
+            release,
+            jobs,
             verbose,
         );
     }
@@ -190,17 +200,19 @@ pub fn dev(
         &assets.watch_directories,
         verbose,
     );
-    let profile_proxy = profile_proxy(&context, true)?;
-    let environment = profile_proxy
-        .as_ref()
-        .map(CargoProfileProxy::environment)
-        .unwrap_or_default();
+    let profile_proxy = profile_proxy(&context, !release)?;
+    let mut environment = native_build_environment(!release, jobs);
+    if let Some(profile_proxy) = profile_proxy.as_ref() {
+        environment.extend_from_slice(profile_proxy.environment());
+    } else if is_native_target(&context.target) {
+        environment.extend(cargo_target_dir_environment()?);
+    }
     let command_result = inherited_command_with_env(
         "perry",
         &args,
         Some(&context.project_root),
         verbose,
-        environment,
+        &environment,
     );
     let move_result = move_new_compiler_objects(
         &context.project_root,
@@ -330,6 +342,8 @@ fn perry_capabilities(verbose: bool) -> Result<PerryCapabilities> {
 fn run_perry_compile(
     context: &BuildContext,
     output_path: &Path,
+    development: bool,
+    jobs: Option<usize>,
     verbose: bool,
 ) -> Result<std::process::Output> {
     let args = perry_compile_args(&context.entry, output_path, &context.target, verbose);
@@ -342,14 +356,20 @@ fn run_perry_compile(
             ui::paint_stderr(display_command("perry", &args), Tone::Accent)
         );
     }
-    let profile_proxy = profile_proxy(context, false)?;
-    let environment = profile_proxy
-        .as_ref()
-        .map(CargoProfileProxy::environment)
-        .unwrap_or_default();
+    let profile_proxy = profile_proxy(context, development)?;
+    let mut environment = native_build_environment(development, jobs);
+    if let Some(profile_proxy) = profile_proxy.as_ref() {
+        environment.extend_from_slice(profile_proxy.environment());
+    } else if is_native_target(&context.target) {
+        environment.extend(cargo_target_dir_environment()?);
+    }
     ui::run_with_elapsed("Compiling", || {
-        streamed_command_with_env("perry", &args, Some(working_directory), false, environment)
+        streamed_command_with_env("perry", &args, Some(working_directory), false, &environment)
     })
+}
+
+fn is_native_target(target: &ResolvedTarget) -> bool {
+    !matches!(target.target, BuildTarget::Web | BuildTarget::Wasm)
 }
 
 fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<CargoProfileProxy>> {
