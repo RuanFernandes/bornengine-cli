@@ -237,4 +237,32 @@ fn top_level_help_lists_import_and_asset_management_commands() {
     let help = Cli::command().render_long_help().to_string();
     assert!(help.contains("import"), "{help}");
     assert!(help.contains("assets"), "{help}");
+    assert!(help.contains("cache"), "{help}");
+}
+
+#[test]
+fn cargo_cache_path_command_is_available_without_a_project() {
+    let parsed = Cli::try_parse_from(["bornengine", "cache", "path"]);
+
+    assert!(matches!(
+        parsed.unwrap().command,
+        Commands::Cache {
+            command: bornengine_cli::cli::CacheCommands::Path
+        }
+    ));
+}
+
+#[test]
+fn cargo_cache_warm_accepts_profile_and_job_options() {
+    let parsed = Cli::try_parse_from(["bornengine", "cache", "warm", "--release", "--jobs", "3"]);
+
+    assert!(matches!(
+        parsed.unwrap().command,
+        Commands::Cache {
+            command: bornengine_cli::cli::CacheCommands::Warm {
+                release: true,
+                jobs: Some(3)
+            }
+        }
+    ));
 }

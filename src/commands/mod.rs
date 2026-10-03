@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod build;
+pub mod cache;
 pub mod config;
 pub mod create;
 pub mod diagnostics;
@@ -91,6 +92,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
         }
         Commands::Update => update::check(),
         Commands::Config { command } => config::execute(command),
+        Commands::Cache { command } => cache::execute(command, verbose),
         Commands::Import { command } => match command {
             crate::cli::ImportCommands::Tiled { map_file, output } => {
                 let project_root = std::env::current_dir()?;

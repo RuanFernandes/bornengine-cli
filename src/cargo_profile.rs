@@ -1,6 +1,7 @@
 use crate::process::executable_path_in_path;
 use crate::project::GameKind;
 use anyhow::{Context, Result, bail};
+use directories::BaseDirs;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,60 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const PROXY_ENGINE_ROOT: &str = "BORNENGINE_CARGO_PROXY_ENGINE_ROOT";
 const PROXY_REAL_CARGO: &str = "BORNENGINE_CARGO_PROXY_REAL";
 const PROXY_FEATURES: &str = "BORNENGINE_CARGO_PROXY_FEATURES";
+const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
+
+pub fn effective_cargo_target_dir() -> Result<PathBuf> {
+    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
+    resolve_cargo_target_dir(cache_dir.as_deref(), std::env::var_os(CARGO_TARGET_DIR))
+}
+
+pub fn cargo_target_dir_environment() -> Result<Vec<(OsString, OsString)>> {
+    let override_dir = std::env::var_os(CARGO_TARGET_DIR);
+    if override_dir.is_some() {
+        return Ok(Vec::new());
+    }
+    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
+    cargo_target_dir_env(cache_dir.as_deref(), None)
+}
+
+pub fn native_build_environment(
+    development: bool,
+    jobs: Option<usize>,
+) -> Vec<(OsString, OsString)> {
+    let mut environment = Vec::new();
+    if development {
+        environment.push(("CARGO_PROFILE_DEV_OPT_LEVEL".into(), "1".into()));
+        environment.push(("CARGO_INCREMENTAL".into(), "1".into()));
+    }
+    if let Some(jobs) = jobs {
+        environment.push(("CARGO_BUILD_JOBS".into(), jobs.to_string().into()));
+    }
+    environment
+}
+
+fn resolve_cargo_target_dir(
+    cache_dir: Option<&Path>,
+    override_dir: Option<OsString>,
+) -> Result<PathBuf> {
+    if let Some(override_dir) = override_dir {
+        return Ok(PathBuf::from(override_dir));
+    }
+    let cache_dir = cache_dir.context(
+        "could not determine the user cache directory; set CARGO_TARGET_DIR to choose a cache path",
+    )?;
+    Ok(cache_dir.join("BornEngine").join("cargo-target"))
+}
+
+fn cargo_target_dir_env(
+    cache_dir: Option<&Path>,
+    override_dir: Option<OsString>,
+) -> Result<Vec<(OsString, OsString)>> {
+    if override_dir.is_some() {
+        return Ok(Vec::new());
+    }
+    let target_dir = resolve_cargo_target_dir(cache_dir, None)?;
+    Ok(vec![(CARGO_TARGET_DIR.into(), target_dir.into_os_string())])
+}
 
 pub fn read_native_profile(project_root: &Path) -> Result<GameKind> {
     let (path, config) = read_project_config(project_root)?;
@@ -241,6 +296,7 @@ pub struct CargoProfileProxy {
 
 impl CargoProfileProxy {
     pub fn new(project_root: &Path, engine_root: &Path, features: &[String]) -> Result<Self> {
+        let cargo_environment = cargo_target_dir_environment()?;
         let real_cargo = executable_path_in_path("cargo").context(
             "Cargo was not found in PATH; install Rust to build this native BornEngine target",
         )?;
@@ -276,7 +332,7 @@ impl CargoProfileProxy {
                 return Err(error).context("could not extend PATH for Perry");
             }
         };
-        let environment = vec![
+        let mut environment = vec![
             (OsString::from("PATH"), path),
             (
                 OsString::from(PROXY_ENGINE_ROOT),
@@ -291,6 +347,7 @@ impl CargoProfileProxy {
                 OsString::from(features.join(",")),
             ),
         ];
+        environment.extend(cargo_environment);
         Ok(Self {
             directory,
             environment,
@@ -357,4 +414,59 @@ fn make_executable(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn make_executable(_: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod cargo_cache_tests {
+    use super::{cargo_target_dir_env, resolve_cargo_target_dir};
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn default_target_directory_uses_a_machine_wide_cache_root() {
+        let cache_dir = Path::new("/user/cache");
+        let resolved = resolve_cargo_target_dir(Some(cache_dir), None).unwrap();
+
+        assert_eq!(
+            resolved,
+            PathBuf::from("/user/cache/BornEngine/cargo-target")
+        );
+    }
+
+    #[test]
+    fn caller_target_directory_is_preserved_verbatim() {
+        let override_dir = OsString::from("../custom/../target-cache");
+        let resolved = resolve_cargo_target_dir(None, Some(override_dir.clone())).unwrap();
+
+        assert_eq!(resolved, PathBuf::from(&override_dir));
+        assert!(
+            cargo_target_dir_env(None, Some(override_dir))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn unavailable_user_cache_directory_has_an_actionable_error() {
+        let error = resolve_cargo_target_dir(None, None).unwrap_err();
+
+        assert!(error.to_string().contains("CARGO_TARGET_DIR"));
+    }
+
+    #[test]
+    fn cargo_proxy_receives_the_default_target_directory_when_unset() {
+        let env = cargo_target_dir_env(Some(Path::new("/user/cache")), None).unwrap();
+
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "CARGO_TARGET_DIR");
+        assert_eq!(env[0].1, "/user/cache/BornEngine/cargo-target");
+    }
+
+    #[test]
+    fn native_development_profile_is_incremental_and_release_is_untouched() {
+        let development = super::native_build_environment(true, None);
+        assert!(development.contains(&("CARGO_PROFILE_DEV_OPT_LEVEL".into(), "1".into())));
+        assert!(development.contains(&("CARGO_INCREMENTAL".into(), "1".into())));
+        assert!(super::native_build_environment(false, None).is_empty());
+    }
 }

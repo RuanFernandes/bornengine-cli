@@ -3,6 +3,16 @@ use crate::project::GameKind;
 use clap::{ArgAction, Parser, Subcommand};
 use std::path::PathBuf;
 
+fn parse_positive_jobs(value: &str) -> Result<usize, String> {
+    let jobs = value
+        .parse::<usize>()
+        .map_err(|_| "jobs must be a positive integer".to_owned())?;
+    if jobs == 0 {
+        return Err("jobs must be a positive integer".to_owned());
+    }
+    Ok(jobs)
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "bornengine",
@@ -165,6 +175,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Inspect or precompile shared native build artifacts.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommands,
+    },
     /// Import maps from external authoring tools.
     Import {
         #[command(subcommand)]
@@ -258,4 +273,20 @@ pub enum ConfigCommands {
     Get { key: String },
     /// List all global configuration values.
     List,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CacheCommands {
+    /// Print the effective shared Cargo target directory.
+    Path,
+    /// Precompile BornEngine's native Rust library for this project.
+    Warm {
+        #[arg(
+            long,
+            help = "Warm the optimized release profile instead of the fast development profile"
+        )]
+        release: bool,
+        #[arg(long, value_parser = parse_positive_jobs, help = "Maximum parallel Cargo jobs")]
+        jobs: Option<usize>,
+    },
 }
