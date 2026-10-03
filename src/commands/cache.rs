@@ -57,7 +57,10 @@ fn warm(release: bool, jobs: Option<usize>, verbose: bool) -> Result<i32> {
     let engine_root = installed_engine_root(&project_root, &dependency)?;
     let manifest = native_manifest_path(&engine_root, HostPlatform::current())?;
     let native_profile = read_native_profile(&project_root)?;
-    let features = read_native_features(&project_root)?;
+    let mut features = read_native_features(&project_root)?;
+    if !release && !features.iter().any(|feature| feature == "dev") {
+        features.push("dev".to_owned());
+    }
     let feature_refs = features.iter().map(String::as_str).collect::<Vec<_>>();
     let base_args = vec![
         OsString::from("build"),

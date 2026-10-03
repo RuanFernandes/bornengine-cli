@@ -207,4 +207,10 @@ fn cache_warm_uses_the_selected_engine_features_profile_cache_and_jobs_without_p
         fast_output.contains("DEV_OPT=1\nINCREMENTAL=1"),
         "{fast_output}"
     );
+    assert!(
+        fast_output
+            .lines()
+            .any(|line| line == "mp3,sqlite,scripting,dev"),
+        "{fast_output}"
+    );
 }
