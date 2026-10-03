@@ -17,10 +17,10 @@ fn add_to_directory(directory: &Path, name: &Path) -> Result<PathBuf> {
 }
 
 fn markdown_path(name: &Path) -> Result<PathBuf> {
-    if name.file_name().is_none() {
+    let Some(file_name) = name.file_name() else {
         bail!("AI guide filename must include a file name");
-    }
-    if name.components().count() != 1 {
+    };
+    if name.as_os_str() != file_name {
         bail!("AI guide path must be a filename in the current directory");
     }
 
@@ -127,5 +127,24 @@ mod tests {
                 .contains("must be a filename in the current directory")
         );
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn rejects_trailing_directory_syntax() {
+        let directory = tempfile::tempdir().unwrap();
+        let nested = directory.path().join("nested");
+        fs::create_dir(&nested).unwrap();
+
+        for input in ["nested/", "nested/."] {
+            let error =
+                super::add_to_directory(directory.path(), std::path::Path::new(input)).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("must be a filename in the current directory")
+            );
+        }
+
+        assert!(!nested.join(".md").exists());
     }
 }
