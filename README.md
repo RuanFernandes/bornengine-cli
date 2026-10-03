@@ -6,13 +6,19 @@
 
 ## Install
 
-Install the CLI from this repository:
+Install the CLI from npm:
+
+```sh
+npm install --global @bornengine/cli
+```
+
+The npm launcher downloads the matching native binary on first use and caches it for later runs. To install the Rust binary directly instead, use Cargo:
 
 ```sh
 cargo install --git https://github.com/RuanFernandes/bornengine-cli
 ```
 
-The CLI itself does not require Node.js. Game projects need Perry and a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
+The downloaded native binary does not require Node.js; the npm launcher requires Node.js 18 or newer. Game projects need Perry and a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
 
 ## Quick start
 
@@ -22,7 +28,7 @@ cd MyGame
 bornengine run main.ts
 ```
 
-`create` interactively asks for a project name, game profile, package manager, and stable engine version from npm. It uses your configured package manager and engine version as the initial selections. For scripts and non-interactive use, `new` creates a starter game, writes Perry's native-library allowlist and BornEngine's Rust profile to `perry.toml`, installs the selected engine package, and creates the package manager lockfile. Use the BornEngine CLI's `build`, `run`, or `dev` command so it can apply the selected Rust profile. Normal projects do not require a separate BornEngine clone.
+`create` interactively asks for a project name, game profile, package manager, and stable engine version from npm. It uses your configured package manager and engine version as the initial selections. For scripts and non-interactive use, `new` creates a starter game, writes the AI guide as `AGENTS.md`, writes Perry's native-library allowlist and BornEngine's Rust profile to `perry.toml`, installs the selected engine package, and creates the package manager lockfile. Use the BornEngine CLI's `build`, `run`, or `dev` command so it can apply the selected Rust profile. Normal projects do not require a separate BornEngine clone.
 
 ## Commands
 
@@ -30,6 +36,7 @@ bornengine run main.ts
 | --- | --- |
 | `bornengine create` | Interactively select a project name, 2D/2.5D/3D profile, package manager, and stable engine version from npm. |
 | `bornengine new <name>` | Create a project with a 2D/2.5D/3D native feature profile and install its dependencies. |
+| `bornengine --add-ai-docs <filename>` | Write the BornEngine AI guide to `<filename>.md` in the current directory without overwriting files. |
 | `bornengine init` | Add a profile-configured project scaffold to an otherwise empty directory. It refuses to overwrite generated files. |
 | `bornengine build <entry>` | Compile for the host or a requested target. |
 | `bornengine run <entry>` | Build and run for the current host. |
@@ -55,7 +62,8 @@ bornengine run main.ts
 Examples:
 
 ```sh
-bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.4.17
+bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.14.0
+bornengine --add-ai-docs game-context
 bornengine new MyScriptedGame --native-features sqlite,scripting
 bornengine new MyAdventure --game-type 2.5d
 bornengine new MyWorld --game-type 3d
@@ -90,7 +98,7 @@ Use `bornengine cache warm` inside an installed BornEngine project to compile th
 
 The package manager can be shortened to `--pm`; `--engine` aliases `--engine-path`. `-o` is the friendly OS selector, and `-n` / `--name` sets the output name. `--os` and `--target` are mutually exclusive.
 
-Scaffolding never deletes or overwrites existing files. `new` refuses a populated target directory, and `init` creates only files that do not already exist. There is intentionally no `--force` option.
+Scaffolding never deletes or overwrites existing files. `new` refuses a populated target directory, and `init` creates only files that do not already exist. `--add-ai-docs` also refuses to overwrite its destination and appends `.md` when the supplied filename does not already end with that extension. There is intentionally no `--force` option.
 
 ## Engine dependency and local development
 
@@ -181,7 +189,7 @@ For the browsable command reference and configuration guide, see [Asset audit in
 
 ## Releases
 
-The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.1.1` produces standalone release assets for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. Alternatively, install from GitHub with Cargo as shown above.
+The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.5.0` produces standalone release assets and a SHA-256 manifest for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. The published `@bornengine/cli` package downloads and verifies the matching asset on first use. Alternatively, install from GitHub with Cargo as shown above.
 
 ## License
 

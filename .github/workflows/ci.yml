@@ -29,3 +29,12 @@ jobs:
         run: cargo test --locked --all-targets --all-features
       - name: Build release executable
         run: cargo build --locked --release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test npm launcher
+        working-directory: npm
+        run: npm test
+      - name: Pack npm package
+        working-directory: npm
+        run: npm pack --dry-run

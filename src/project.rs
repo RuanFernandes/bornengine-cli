@@ -6,14 +6,6 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-const GENERATED_FILES: &[&str] = &[
-    "package.json",
-    "perry.toml",
-    "main.ts",
-    ".gitignore",
-    "README.md",
-];
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
 pub enum GameKind {
     #[default]
@@ -116,7 +108,7 @@ pub fn create_project(parent: &Path, project_name: &str, spec: &ProjectSpec) -> 
         }
     };
 
-    if let Err(error) = write_project_files(&root, project_name, spec) {
+    if let Err(error) = write_project_files(&root, project_name, spec, true) {
         if root_was_created {
             let _ = fs::remove_dir(&root);
         }
@@ -132,22 +124,27 @@ pub fn initialize_project(root: &Path, project_name: &str, spec: &ProjectSpec) -
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         bail!("project path must be a real directory: {}", root.display());
     }
-    write_project_files(root, project_name, spec)?;
+    write_project_files(root, project_name, spec, false)?;
     Ok(root.to_path_buf())
 }
 
-fn write_project_files(root: &Path, project_name: &str, spec: &ProjectSpec) -> Result<()> {
+fn write_project_files(
+    root: &Path,
+    project_name: &str,
+    spec: &ProjectSpec,
+    include_ai_guide: bool,
+) -> Result<()> {
     validate_project_name(project_name)?;
     validate_spec(spec)?;
-    for name in GENERATED_FILES {
+    let package_name = npm_project_name(project_name)?;
+    let files = generated_files(project_name, &package_name, spec, include_ai_guide)?;
+    for (name, _) in &files {
         let path = root.join(name);
         if fs::symlink_metadata(&path).is_ok() {
             bail!("project file already exists: {}", path.display());
         }
     }
 
-    let package_name = npm_project_name(project_name)?;
-    let files = generated_files(project_name, &package_name, spec)?;
     let mut created = Vec::new();
     for (name, contents) in files {
         let path = root.join(name);
@@ -175,6 +172,7 @@ fn generated_files(
     project_title: &str,
     package_name: &str,
     spec: &ProjectSpec,
+    include_ai_guide: bool,
 ) -> Result<Vec<(&'static str, String)>> {
     let mut package = Map::new();
     package.insert("name".to_owned(), json!(package_name));
@@ -229,13 +227,17 @@ new StarterGame().run();
     let readme = format!(
         "# {project_title}\n\nA small game made with BornEngine and Perry.\n\n## Run\n\n```sh\nbornengine run main.ts\n```\n\n## Build\n\n```sh\nbornengine build main.ts --os linux\nbornengine build main.ts --os windows\n```\n"
     );
-    Ok(vec![
+    let mut files = vec![
         ("package.json", package_json),
         ("perry.toml", perry_toml),
         ("main.ts", main_ts),
         (".gitignore", gitignore.to_owned()),
         ("README.md", readme),
-    ])
+    ];
+    if include_ai_guide {
+        files.push(("AGENTS.md", crate::ai_docs::GUIDE.to_owned()));
+    }
+    Ok(files)
 }
 
 fn generated_perry_toml(package_name: &str, spec: &ProjectSpec) -> String {

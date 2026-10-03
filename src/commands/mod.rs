@@ -10,11 +10,22 @@ pub mod project;
 pub mod update;
 
 use crate::cli::{Cli, Commands};
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 
 pub fn execute(cli: Cli) -> Result<i32> {
     let verbose = cli.verbose > 0;
-    match cli.command {
+    if let Some(file_name) = cli.add_ai_docs {
+        if cli.command.is_some() {
+            bail!("`--add-ai-docs` cannot be combined with another command");
+        }
+        let path = crate::ai_docs::add_to_file(&file_name)?;
+        println!("BornEngine AI guide written to {}", path.display());
+        return Ok(0);
+    }
+    let command = cli
+        .command
+        .context("a command is required; run `bornengine --help` for usage")?;
+    match command {
         Commands::Create => create::create(verbose),
         Commands::New {
             project_name,
