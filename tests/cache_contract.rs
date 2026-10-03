@@ -4,6 +4,7 @@ use std::process::Command;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(unix)]
 fn engine_project(root: &std::path::Path) -> std::path::PathBuf {
     let manifest_platform = current_native_platform();
     fs::create_dir_all(
@@ -33,6 +34,7 @@ fn engine_project(root: &std::path::Path) -> std::path::PathBuf {
     engine
 }
 
+#[cfg(unix)]
 fn current_native_platform() -> &'static str {
     match std::env::consts::OS {
         "linux" => "linux",
