@@ -1,6 +1,7 @@
 use crate::cargo_profile::{
-    args_with_profile, cargo_target_dir_environment, effective_cargo_target_dir,
-    native_build_environment, read_native_features, read_native_profile,
+    args_with_profile, cargo_target_dir_environment_from, effective_cargo_target_dir,
+    effective_cargo_target_dir_from, native_build_environment, read_native_features,
+    read_native_profile,
 };
 use crate::cli::CacheCommands;
 use crate::engine::{EngineDependency, engine_dependency};
@@ -72,13 +73,13 @@ fn warm(release: bool, jobs: Option<usize>, verbose: bool) -> Result<i32> {
         args.push(OsString::from("--release"));
     }
 
-    let mut environment = cargo_target_dir_environment()?;
+    let mut environment = cargo_target_dir_environment_from(&project_root)?;
     environment.extend(native_build_environment(!release, jobs));
     println!(
         "Warming BornEngine {} ({}) in {}",
         dependency.spec,
         native_profile.label(),
-        effective_cargo_target_dir()?.display()
+        effective_cargo_target_dir_from(&project_root)?.display()
     );
     let output = ui::run_with_elapsed("Warming native engine cache", || {
         streamed_command_with_env("cargo", &args, Some(&project_root), verbose, &environment)

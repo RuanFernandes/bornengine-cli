@@ -2,7 +2,7 @@ use crate::build_artifacts::{
     begin_build, begin_dev_build, clean_build_artifacts, record_build_files,
 };
 use crate::cargo_profile::{
-    CargoProfileProxy, cargo_target_dir_environment, native_build_environment,
+    CargoProfileProxy, cargo_target_dir_environment_from, native_build_environment,
     read_native_features, read_native_profile,
 };
 use crate::commands::assets::{pack_project, validate_project_assets};
@@ -200,7 +200,7 @@ pub fn dev(entry_file: &Path, watch: bool, options: BuildOptions<'_>) -> Result<
     if let Some(profile_proxy) = profile_proxy.as_ref() {
         environment.extend_from_slice(profile_proxy.environment());
     } else if is_native_target(&context.target) {
-        environment.extend(cargo_target_dir_environment()?);
+        environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
     }
     let command_result = inherited_command_with_env(
         "perry",
@@ -356,7 +356,7 @@ fn run_perry_compile(
     if let Some(profile_proxy) = profile_proxy.as_ref() {
         environment.extend_from_slice(profile_proxy.environment());
     } else if is_native_target(&context.target) {
-        environment.extend(cargo_target_dir_environment()?);
+        environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
     }
     ui::run_with_elapsed("Compiling", || {
         streamed_command_with_env("perry", &args, Some(working_directory), false, &environment)

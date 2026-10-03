@@ -14,17 +14,41 @@ const PROXY_FEATURES: &str = "BORNENGINE_CARGO_PROXY_FEATURES";
 const CARGO_TARGET_DIR: &str = "CARGO_TARGET_DIR";
 
 pub fn effective_cargo_target_dir() -> Result<PathBuf> {
-    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
-    resolve_cargo_target_dir(cache_dir.as_deref(), std::env::var_os(CARGO_TARGET_DIR))
+    let cwd = std::env::current_dir().context("could not determine current directory")?;
+    effective_cargo_target_dir_from(&cwd)
 }
 
-pub fn cargo_target_dir_environment() -> Result<Vec<(OsString, OsString)>> {
-    let override_dir = std::env::var_os(CARGO_TARGET_DIR);
-    if override_dir.is_some() {
+pub fn effective_cargo_target_dir_from(base_dir: &Path) -> Result<PathBuf> {
+    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
+    resolve_cargo_target_dir_from(
+        cache_dir.as_deref(),
+        std::env::var_os(CARGO_TARGET_DIR),
+        base_dir,
+    )
+}
+
+pub fn cargo_target_dir_environment_from(base_dir: &Path) -> Result<Vec<(OsString, OsString)>> {
+    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
+    cargo_target_dir_env_from(
+        cache_dir.as_deref(),
+        std::env::var_os(CARGO_TARGET_DIR),
+        base_dir,
+    )
+}
+
+fn cargo_target_dir_env_from(
+    cache_dir: Option<&Path>,
+    override_dir: Option<OsString>,
+    base_dir: &Path,
+) -> Result<Vec<(OsString, OsString)>> {
+    let Some(override_dir) = override_dir else {
+        return cargo_target_dir_env(cache_dir, None);
+    };
+    if Path::new(&override_dir).is_absolute() {
         return Ok(Vec::new());
     }
-    let cache_dir = BaseDirs::new().map(|directories| directories.cache_dir().to_path_buf());
-    cargo_target_dir_env(cache_dir.as_deref(), None)
+    let target_dir = resolve_cargo_target_dir_from(cache_dir, Some(override_dir), base_dir)?;
+    Ok(vec![(CARGO_TARGET_DIR.into(), target_dir.into_os_string())])
 }
 
 pub fn native_build_environment(
@@ -53,6 +77,25 @@ fn resolve_cargo_target_dir(
         "could not determine the user cache directory; set CARGO_TARGET_DIR to choose a cache path",
     )?;
     Ok(cache_dir.join("BornEngine").join("cargo-target"))
+}
+
+fn resolve_cargo_target_dir_from(
+    cache_dir: Option<&Path>,
+    override_dir: Option<OsString>,
+    base_dir: &Path,
+) -> Result<PathBuf> {
+    let target_dir = resolve_cargo_target_dir(cache_dir, override_dir)?;
+    if target_dir.is_absolute() {
+        return Ok(target_dir);
+    }
+    let base_dir = if base_dir.is_absolute() {
+        base_dir.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .context("could not determine current directory")?
+            .join(base_dir)
+    };
+    Ok(base_dir.join(target_dir))
 }
 
 fn cargo_target_dir_env(
@@ -515,7 +558,7 @@ pub struct CargoProfileProxy {
 
 impl CargoProfileProxy {
     pub fn new(project_root: &Path, engine_root: &Path, features: &[String]) -> Result<Self> {
-        let cargo_environment = cargo_target_dir_environment()?;
+        let cargo_environment = cargo_target_dir_environment_from(project_root)?;
         let real_cargo = executable_path_in_path("cargo").context(
             "Cargo was not found in PATH; install Rust to build this native BornEngine target",
         )?;
@@ -637,7 +680,7 @@ fn make_executable(_: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod cargo_cache_tests {
-    use super::{cargo_target_dir_env, resolve_cargo_target_dir};
+    use super::{cargo_target_dir_env, resolve_cargo_target_dir, resolve_cargo_target_dir_from};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
@@ -662,6 +705,37 @@ mod cargo_cache_tests {
             cargo_target_dir_env(None, Some(override_dir))
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn relative_target_directory_is_anchored_to_the_project_root() {
+        let project_root = Path::new("/games/MyGame");
+        let target_dir = resolve_cargo_target_dir_from(
+            None,
+            Some(OsString::from("../shared-cache")),
+            project_root,
+        )
+        .unwrap();
+
+        assert_eq!(target_dir, PathBuf::from("/games/MyGame/../shared-cache"));
+    }
+
+    #[test]
+    fn relative_target_directory_is_passed_as_absolute_to_subprocesses() {
+        let project_root = Path::new("/games/MyGame");
+        let environment = super::cargo_target_dir_env_from(
+            None,
+            Some(OsString::from("../shared-cache")),
+            project_root,
+        )
+        .unwrap();
+
+        assert_eq!(environment.len(), 1);
+        assert_eq!(environment[0].0, "CARGO_TARGET_DIR");
+        assert_eq!(
+            environment[0].1,
+            PathBuf::from("/games/MyGame/../shared-cache").into_os_string()
         );
     }
 
