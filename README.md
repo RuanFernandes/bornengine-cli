@@ -62,7 +62,7 @@ bornengine run main.ts
 Examples:
 
 ```sh
-bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.14.0
+bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.15.0
 bornengine --add-ai-docs game-context
 bornengine new MyScriptedGame --native-features sqlite,scripting
 bornengine new MyAdventure --game-type 2.5d

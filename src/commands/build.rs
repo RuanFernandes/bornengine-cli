@@ -375,15 +375,45 @@ fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<Car
     if matches!(context.target.target, BuildTarget::Web | BuildTarget::Wasm) {
         return Ok(None);
     }
-    let mut features = read_native_features(&context.project_root)?;
-    if development && !features.iter().any(|feature| feature == "dev") {
-        features.push("dev".to_owned());
-    }
+    let features =
+        native_features_for_build(read_native_features(&context.project_root)?, development);
     Ok(Some(CargoProfileProxy::new(
         &context.project_root,
         engine_root,
         &features,
     )?))
+}
+
+fn native_features_for_build(mut features: Vec<String>, development: bool) -> Vec<String> {
+    if development {
+        for feature in ["hot-reload", "dev"] {
+            if !features.iter().any(|existing| existing == feature) {
+                features.push(feature.to_owned());
+            }
+        }
+    }
+    features
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::native_features_for_build;
+
+    #[test]
+    fn development_profiles_enable_file_asset_hot_reload() {
+        assert_eq!(
+            native_features_for_build(vec!["mp3".to_owned()], true),
+            ["mp3", "hot-reload", "dev"]
+        );
+    }
+
+    #[test]
+    fn release_profiles_leave_file_asset_hot_reload_disabled() {
+        assert_eq!(
+            native_features_for_build(vec!["mp3".to_owned()], false),
+            ["mp3"]
+        );
+    }
 }
 
 fn native_profile(project_root: &Path, package: &Value) -> Result<Option<GameKind>> {

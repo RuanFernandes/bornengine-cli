@@ -18,6 +18,9 @@ fn add_ai_docs_appends_markdown_and_writes_the_guide() {
     let guide = fs::read_to_string(directory.path().join("assistant-guide.md")).unwrap();
     assert!(guide.starts_with("# BornEngine — AI context reference for language models"));
     assert!(guide.contains("Do not pass `Game` to assets."));
+    assert!(guide.contains("AStarGrid2D"));
+    assert!(guide.contains("SeededRandom"));
+    assert!(guide.contains("BLOOM_NO_HOT_RELOAD=1"));
 }
 
 #[test]

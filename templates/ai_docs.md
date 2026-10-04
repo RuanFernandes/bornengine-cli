@@ -1,6 +1,6 @@
 # BornEngine — AI context reference for language models
 
-This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.14.0`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
+This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.15.0`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
 
 ## Rules for writing or reviewing code
 
@@ -18,7 +18,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 
 Game code uses TypeScript classes; Perry compiles it ahead of time and communicates with Rust layers through a private FFI. Shared Rust code lives in `native/shared/`; the `native/<platform>/` crates connect the runtime to the host. Classes, services, factories, and ownership are the game-facing API. Numeric handles and FFI functions are internal details and must not appear in public examples.
 
-The package prepared for this release is version `0.14.0`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
+The package prepared for this release is version `0.15.0`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
 
 ## Creating a game
 
@@ -98,6 +98,8 @@ Visual components such as `SpriteRenderer`, `Tilemap`, and `ParticleEmitter2D` a
 
 Factories may return `null`; loadable resources also expose `isLoaded` and `error`. The manager tracks identity and cache state, removes disposed resources from its inventory, and releases any resources it still owns when the scope ends. Use the same owning `Game` for related components and native resources.
 
+Native development builds from `bornengine run` or `bornengine dev` watch successfully loaded file-backed textures, sounds, and music. Changes are debounced for about 120 ms and preserve resource handles. Texture dimensions must stay the same; decode errors keep the previous texture. Already-playing sound voices keep their original samples, and reloading active music restarts it from the beginning with volume and loop settings preserved. Set `BLOOM_NO_HOT_RELOAD=1` to disable watchers. Optimized builds, Web/WASM, and builds without the `hot-reload` feature do not watch file-backed assets.
+
 ```ts
 const texture = this.assets.loadTexture('assets/player.png');
 if (texture === null || !texture.isLoaded) {
@@ -116,6 +118,10 @@ if (texture === null || !texture.isLoaded) {
 BornEngine's current development focus is 2D. Use `Vector2D` for 2D math and vectors. Many parameters and serialized data also accept structural `{ x, y }` objects; prefer `Vector2D` for gameplay values and operations.
 
 `Vector2D` is a mutable value type with factories, getters, and static/instance operations. Instance methods: `clone`, `set`, `copy`; getters `magnitude`, `sqrMagnitude`, aliases `length`/`lengthSquared`, and `normalized`; operations `add`, `subtract`, `multiply`, `divide`, `scale`, `dotWith`, `crossWith`, `distanceTo`, `interpolatedTo`, `rotatedBy`, `clamped`, `clampedMagnitude`, `equals`, and `equalsApprox`. Static helpers: `zero`, `one`, `up`, `down`, `left`, `right`, `from`, `sum`, `difference`, `componentProduct`, `componentQuotient`, `scaled`, `normalize`, `magnitude`, `sqrMagnitude`, `dot`, `cross`, `distance`, `distanceSquared`, `min`, `max`, `clamp`, `clampMagnitude`, `lerp`, `lerpUnclamped`, `moveTowards`, `reflect`, `project`, `angle`, `signedAngle`, `rotate`, and `perpendicular`. Operations that produce a vector return a new instance; `set`/`copy` mutate the instance and return `this`. `angle` and `signedAngle` return degrees; `rotate` takes radians. `Vector2D.up()` means Cartesian +Y, while the engine's 2D physics uses positive Y downward; convert directions when crossing these conventions.
+
+`AStarGrid2D(width, height)` creates an open uniform-cost grid with up to 1,000,000 cells. Mark obstacles with `setWalkable`, then call `findPath(start, goal, options)` for a route including both endpoints or `null`. Orthogonal movement is the default; diagonal steps cost sqrt(2), and corner cutting stays disabled unless enabled. Per-cell terrain weights are not supported.
+
+`SeededRandom(seed)` provides deterministic `next()`, half-open float `range(min, max)`, and inclusive integer `integer(min, max)` values without global random state. `Noise2D(seed)` provides smooth normalized `sample(x, y)` and normalized `fractal(x, y, options)` values for procedural terrain and other fields.
 
 ### Sprites and animation
 
@@ -136,7 +142,7 @@ Attach the renderer and animator to the same `GameObject`. The scene handles upd
 
 `Tilemap` is a scene component with tile and collision data. `World2DDocument` v1 is versioned JSON independent of 3D `WorldData`. Use `validateWorld2D`, `serializeWorld2D`, `World2DComponentRegistry`, and `World2DLoader`; the loader takes `resolveSpriteFrame` and, when the document contains bodies, a ready `PhysicsWorld2D` instance. The CLI importer `bornengine import tiled <map.tmx> --output <world.world2d.json>` accepts orthogonal Tiled maps within the documented finite-map subset.
 
-Do not claim there is a public `Navigation2D` class in this version. It is not exported or implemented in the verified package.
+There is no public `Navigation2D` class or weighted navigation mesh in this version. Use exported `AStarGrid2D` for uniform-cost grid pathfinding.
 
 ### Cameras and viewport
 
@@ -182,7 +188,7 @@ Validated v1 targets: native Linux and Web/WASM. Other native targets and watchO
 `bornengine create` is interactive and asks for a name, game type, package manager, and stable engine version. `new` is the named/flagged variant; `init` initializes the current directory.
 
 ```sh
-bornengine new MyGame --game-type 2d --package-manager pnpm --engine-version 0.14.0
+bornengine new MyGame --game-type 2d --package-manager pnpm --engine-version 0.15.0
 bornengine check main.ts
 bornengine run main.ts
 bornengine dev main.ts --watch
@@ -198,7 +204,7 @@ bornengine --add-ai-docs assistant-guide
 | `2.5d` | `mp3`, `models3d`, `image-extras` | 3D models without Jolt |
 | `3d` | `mp3`, `jolt`, `models3d`, `image-extras` | 3D models and Jolt physics |
 
-Extra features can be added to `[bornengine].native_features`, for example `debug-ui` in Linux/macOS/Windows builds. Direct Perry commands do not read the profile; Web uses a precompiled WASM artifact and is not pruned by these profiles. `bornengine dev` only watches and restarts files when `--watch` is used.
+Extra features can be added to `[bornengine].native_features`, for example `debug-ui` in Linux/macOS/Windows builds. Native `bornengine run` and `bornengine dev` development builds also enable the `hot-reload` and `dev` features; `bornengine build` and commands passed `--release` keep those development-only features disabled. Set `BLOOM_NO_HOT_RELOAD=1` to disable asset and material file watchers at runtime. Direct Perry commands do not read the BornEngine profile; Web uses a precompiled WASM artifact and does not watch files. `bornengine dev --watch` separately watches source and asset directories to rebuild and restart the game.
 
 `bornengine create` and `bornengine new` include this guide in the generated project's root as `AGENTS.md`. To copy it into the current directory under another name, run `bornengine --add-ai-docs <filename>`; the CLI appends `.md` when needed and does not overwrite an existing file.
 
@@ -233,6 +239,8 @@ The root import `@bornengine/engine` is appropriate for game code. Public subpat
 | `@bornengine/engine/textures` | `Texture`, `ImageData`, `RenderTexture` |
 | `@bornengine/engine/sprites` | `SpriteSheet`, `SpriteRenderer`, `SpriteAnimation`, `SpriteAnimator`, `ParticleEmitter2D` |
 | `@bornengine/engine/math` | `Vector2D`, `Vec3`, `Vec4`, `Quat`, `Matrix4`, `Mathf`, `Collision` |
+| `@bornengine/engine/pathfinding2d` | `AStarGrid2D` |
+| `@bornengine/engine/procedural` | `SeededRandom`, `Noise2D` |
 | `@bornengine/engine/shapes` | Drawing and collision primitives |
 | `@bornengine/engine/camera2d` | `CameraRig2D`, `Viewport2D`, parallax |
 | `@bornengine/engine/physics2d` | `PhysicsWorld2D`, `PhysicsBody2D`, `CharacterBody2D` |
