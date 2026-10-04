@@ -43,7 +43,7 @@ bornengine run main.ts
 | `bornengine dev <entry>` | Build and run once; pass `--watch` to use Perry's rebuild-and-restart loop. |
 | `bornengine cache path` | Show the shared Cargo build cache used for native builds. |
 | `bornengine cache warm` | Precompile this project's native engine into the shared cache. |
-| `bornengine check <entry>` | Run Perry's compatibility check. |
+| `bornengine check <entry>` | Run Perry's source compatibility check, optionally including installed-package analysis. |
 | `bornengine import tiled <map.tmx> --output <world.world2d.json>` | Convert an orthogonal Tiled map to BornEngine's versioned world format. |
 | `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
 | `bornengine assets pack [project-root] --output <directory>` | Copy project assets and write a deterministic SHA-256 manifest. |
@@ -127,6 +127,18 @@ Without `--os` or `--target`, the CLI uses Perry's native host target. Friendly 
 Cross-compilation is available only when the installed Perry and its platform toolchain support the selected target. The CLI does not silently substitute another platform. macOS uses Perry's native macOS target and therefore needs a macOS host. `run` only accepts native executables that match the current host; web and mobile builds are build-only. Web/WASM outputs use Perry's HTML output format.
 
 Build outputs are isolated under `.bornengine/builds/`. Watch-mode output uses `.perry-dev/`, which Perry excludes from its source watcher. Both paths are ignored by the generated project's Git configuration. `clean` removes only files recorded in the CLI manifest; it does not delete dependencies or untracked files.
+
+## Perry compatibility checks
+
+`bornengine check main.ts --check-deps` asks the installed Perry compiler to inspect dependencies in `node_modules` used by the entry point. Add `--deep-deps` to scan the full installed dependency tree instead of only direct imports. Perry owns the compatibility analysis and its diagnostics are shown as reported; the CLI does not infer that an untested package is incompatible. Perry warnings are findings to review, not proof that a package cannot run. Use `--all` to include all Perry findings, including hints, and `--strict` to make Perry treat its warnings as errors:
+
+```sh
+bornengine check main.ts --check-deps
+bornengine check main.ts --check-deps --deep-deps --all
+bornengine check main.ts --check-deps --strict
+```
+
+The scan analyzes what Perry can observe in installed package code and declarations. A successful check is not a guarantee of runtime behavior for every code path or platform. `--deep-deps` requires `--check-deps`.
 
 ## Tiled maps and game assets
 

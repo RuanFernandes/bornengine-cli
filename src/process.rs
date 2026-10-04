@@ -29,10 +29,35 @@ pub fn perry_compile_args(
     args
 }
 
-pub fn perry_check_args(entry: &Path, target: Option<&str>, verbose: bool) -> Vec<OsString> {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PerryCheckOptions {
+    pub check_dependencies: bool,
+    pub deep_dependencies: bool,
+    pub show_all: bool,
+    pub strict: bool,
+}
+
+pub fn perry_check_args(
+    entry: &Path,
+    target: Option<&str>,
+    verbose: bool,
+    options: PerryCheckOptions,
+) -> Vec<OsString> {
     let mut args = vec!["check".into(), entry.as_os_str().to_owned()];
     if let Some(target) = target {
         args.extend(["--target".into(), target.into()]);
+    }
+    if options.check_dependencies {
+        args.push("--check-deps".into());
+    }
+    if options.deep_dependencies {
+        args.push("--deep-deps".into());
+    }
+    if options.show_all {
+        args.push("--all".into());
+    }
+    if options.strict {
+        args.push("--strict".into());
     }
     if verbose {
         args.push("-v".into());

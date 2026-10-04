@@ -192,6 +192,21 @@ pub fn execute(cli: Cli) -> Result<i32> {
             entry_file,
             os,
             target,
-        } => build::check(&entry_file, os.as_deref(), target.as_deref(), verbose),
+            check_deps,
+            deep_deps,
+            show_all,
+            strict,
+        } => build::check(
+            &entry_file,
+            os.as_deref(),
+            target.as_deref(),
+            verbose,
+            crate::process::PerryCheckOptions {
+                check_dependencies: check_deps,
+                deep_dependencies: deep_deps,
+                show_all,
+                strict,
+            },
+        ),
     }
 }
