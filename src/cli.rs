@@ -237,7 +237,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: AssetCommands,
     },
-    /// Check TypeScript compatibility without creating a binary.
+    /// Check Perry compatibility without creating a binary.
     Check {
         #[arg(help = "TypeScript entry file")]
         entry_file: PathBuf,
@@ -254,6 +254,21 @@ pub enum Commands {
             help = "Exact target name advertised by Perry"
         )]
         target: Option<String>,
+        #[arg(
+            long,
+            help = "Ask Perry to scan installed dependencies for compatibility"
+        )]
+        check_deps: bool,
+        #[arg(
+            long,
+            requires = "check_deps",
+            help = "Scan all installed dependencies, not only direct imports"
+        )]
+        deep_deps: bool,
+        #[arg(long = "all", help = "Include all Perry findings, including hints")]
+        show_all: bool,
+        #[arg(long, help = "Treat Perry compatibility warnings as errors")]
+        strict: bool,
     },
 }
 

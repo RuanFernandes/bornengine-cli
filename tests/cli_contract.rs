@@ -152,6 +152,46 @@ fn verbose_flag_is_available_after_a_subcommand() {
 }
 
 #[test]
+fn check_exposes_perry_dependency_compatibility_options() {
+    let cli = Cli::try_parse_from([
+        "bornengine",
+        "check",
+        "src/main.ts",
+        "--check-deps",
+        "--deep-deps",
+        "--all",
+        "--strict",
+    ])
+    .unwrap();
+
+    assert!(matches!(
+        cli.command.unwrap(),
+        Commands::Check {
+            check_deps: true,
+            deep_deps: true,
+            show_all: true,
+            strict: true,
+            ..
+        }
+    ));
+
+    let mut command = Cli::command();
+    let help = command
+        .find_subcommand_mut("check")
+        .unwrap()
+        .render_long_help()
+        .to_string();
+    assert!(help.contains("scan installed dependencies for compatibility"));
+    assert!(help.contains("not only direct imports"));
+    assert!(help.contains("all Perry findings, including hints"));
+}
+
+#[test]
+fn deep_dependency_check_requires_dependency_scanning() {
+    assert!(Cli::try_parse_from(["bornengine", "check", "src/main.ts", "--deep-deps",]).is_err());
+}
+
+#[test]
 fn tiled_import_command_accepts_map_and_output_paths() {
     let cli = Cli::try_parse_from([
         "bornengine",

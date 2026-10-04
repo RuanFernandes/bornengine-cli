@@ -1,6 +1,8 @@
 use bornengine_cli::package_manager::PackageManager;
 use bornengine_cli::platform::{HostPlatform, PerryCapabilities, TargetRequest, resolve_target};
-use bornengine_cli::process::{perry_check_args, perry_compile_args, perry_dev_args};
+use bornengine_cli::process::{
+    PerryCheckOptions, perry_check_args, perry_compile_args, perry_dev_args,
+};
 use std::path::Path;
 
 #[test]
@@ -110,7 +112,12 @@ fn compile_args_preserve_an_exact_target_not_known_to_the_cli() {
 #[test]
 fn check_and_dev_arguments_keep_entry_and_output_separate() {
     assert_eq!(
-        perry_check_args(Path::new("src/main.ts"), Some("web"), false),
+        perry_check_args(
+            Path::new("src/main.ts"),
+            Some("web"),
+            false,
+            PerryCheckOptions::default(),
+        ),
         ["check", "src/main.ts", "--target", "web"]
     );
     assert_eq!(
@@ -121,6 +128,34 @@ fn check_and_dev_arguments_keep_entry_and_output_separate() {
             false,
         ),
         ["dev", "main.ts", "--output", ".bornengine/builds/game"]
+    );
+}
+
+#[test]
+fn check_can_delegate_dependency_compatibility_scanning_to_perry() {
+    assert_eq!(
+        perry_check_args(
+            Path::new("src/main.ts"),
+            Some("web"),
+            true,
+            PerryCheckOptions {
+                check_dependencies: true,
+                deep_dependencies: true,
+                show_all: true,
+                strict: true,
+            },
+        ),
+        [
+            "check",
+            "src/main.ts",
+            "--target",
+            "web",
+            "--check-deps",
+            "--deep-deps",
+            "--all",
+            "--strict",
+            "-v"
+        ]
     );
 }
 

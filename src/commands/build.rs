@@ -11,9 +11,9 @@ use crate::platform::{
     BuildTarget, HostPlatform, PerryCapabilities, ResolvedTarget, TargetRequest, resolve_target,
 };
 use crate::process::{
-    captured_command, display_command, ensure_streamed_success, ensure_success, inherited_command,
-    inherited_command_with_env, perry_check_args, perry_compile_args, perry_dev_args,
-    streamed_command_with_env,
+    PerryCheckOptions, captured_command, display_command, ensure_streamed_success, ensure_success,
+    inherited_command, inherited_command_with_env, perry_check_args, perry_compile_args,
+    perry_dev_args, streamed_command_with_env,
 };
 use crate::project::GameKind;
 use crate::project::{find_project_root, read_package_json};
@@ -253,20 +253,19 @@ pub fn check(
     os: Option<&str>,
     exact_target: Option<&str>,
     verbose: bool,
+    check_options: PerryCheckOptions,
 ) -> Result<i32> {
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
     let target = context.target.perry_target.as_deref();
-    let args = perry_check_args(&context.entry, target, verbose);
-    let output = captured_command("perry", &args, Some(&context.project_root), verbose)?;
-    if verbose {
-        print_output(&output);
+    let args = perry_check_args(&context.entry, target, verbose, check_options);
+    let exit_code = inherited_command("perry", &args, Some(&context.project_root), verbose)?;
+    if exit_code == 0 {
+        println!(
+            "{}",
+            ui::paint("Perry check completed successfully.", Tone::Success)
+        );
     }
-    ensure_success("perry check", &output)?;
-    println!(
-        "{}",
-        ui::paint("Perry check completed successfully.", Tone::Success)
-    );
-    Ok(0)
+    Ok(exit_code)
 }
 
 pub fn clean(project_root: &Path) -> Result<usize> {
@@ -376,15 +375,45 @@ fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<Car
     if matches!(context.target.target, BuildTarget::Web | BuildTarget::Wasm) {
         return Ok(None);
     }
-    let mut features = read_native_features(&context.project_root)?;
-    if development && !features.iter().any(|feature| feature == "dev") {
-        features.push("dev".to_owned());
-    }
+    let features =
+        native_features_for_build(read_native_features(&context.project_root)?, development);
     Ok(Some(CargoProfileProxy::new(
         &context.project_root,
         engine_root,
         &features,
     )?))
+}
+
+fn native_features_for_build(mut features: Vec<String>, development: bool) -> Vec<String> {
+    if development {
+        for feature in ["hot-reload", "dev"] {
+            if !features.iter().any(|existing| existing == feature) {
+                features.push(feature.to_owned());
+            }
+        }
+    }
+    features
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::native_features_for_build;
+
+    #[test]
+    fn development_profiles_enable_file_asset_hot_reload() {
+        assert_eq!(
+            native_features_for_build(vec!["mp3".to_owned()], true),
+            ["mp3", "hot-reload", "dev"]
+        );
+    }
+
+    #[test]
+    fn release_profiles_leave_file_asset_hot_reload_disabled() {
+        assert_eq!(
+            native_features_for_build(vec!["mp3".to_owned()], false),
+            ["mp3"]
+        );
+    }
 }
 
 fn native_profile(project_root: &Path, package: &Value) -> Result<Option<GameKind>> {
@@ -418,17 +447,6 @@ fn installed_engine_root(project_root: &Path, package: &Value) -> Result<Option<
         )
     })?;
     Ok(Some(root))
-}
-
-fn print_output(output: &std::process::Output) {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stdout.trim().is_empty() {
-        print!("{stdout}");
-    }
-    if !stderr.trim().is_empty() {
-        eprint!("{stderr}");
-    }
 }
 
 fn target_label(target: &ResolvedTarget) -> String {
