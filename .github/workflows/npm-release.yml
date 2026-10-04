@@ -3,6 +3,15 @@ name: Publish npm CLI package
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to publish
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -10,11 +19,23 @@ permissions:
 jobs:
   publish:
     name: Publish @bornengine/cli
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        startsWith(github.event.workflow_run.head_branch, 'v')
+      )
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag || github.event.workflow_run.head_branch }}
+      - name: Verify release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag || github.event.workflow_run.head_branch }}
+        run: gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null
       - uses: actions/setup-node@v4
         with:
           node-version: 22
