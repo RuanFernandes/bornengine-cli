@@ -7,9 +7,10 @@ pub mod diagnostics;
 pub mod engine;
 pub mod import;
 pub mod project;
+pub mod server;
 pub mod update;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, CreateCommands};
 use anyhow::{Context, Result, bail};
 
 pub fn execute(cli: Cli) -> Result<i32> {
@@ -26,7 +27,13 @@ pub fn execute(cli: Cli) -> Result<i32> {
         .command
         .context("a command is required; run `bornengine --help` for usage")?;
     match command {
-        Commands::Create => create::create(verbose),
+        Commands::Create { command } => match command {
+            None => create::create(verbose),
+            Some(CreateCommands::Server {
+                path,
+                package_manager,
+            }) => server::create(path.as_deref(), package_manager, verbose),
+        },
         Commands::New {
             project_name,
             package_manager,

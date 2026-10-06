@@ -1,4 +1,4 @@
-use bornengine_cli::cli::{Cli, Commands};
+use bornengine_cli::cli::{Cli, Commands, CreateCommands};
 use clap::{CommandFactory, Parser};
 use std::path::Path;
 
@@ -142,7 +142,35 @@ fn new_accepts_short_package_manager_and_engine_aliases() {
 fn create_is_available_as_a_separate_interactive_command() {
     let cli = Cli::try_parse_from(["bornengine", "create"]).unwrap();
 
-    assert!(matches!(cli.command.unwrap(), Commands::Create));
+    assert!(matches!(
+        cli.command.unwrap(),
+        Commands::Create { command: None }
+    ));
+}
+
+#[test]
+fn create_server_accepts_a_target_path_and_package_manager() {
+    let parsed = Cli::try_parse_from([
+        "bornengine",
+        "create",
+        "server",
+        "backend",
+        "--package-manager",
+        "npm",
+    ]);
+
+    let cli = parsed.unwrap_or_else(|error| {
+        panic!("`bornengine create server <path> --package-manager npm` should parse: {error}")
+    });
+    assert!(matches!(
+        cli.command.unwrap(),
+        Commands::Create {
+            command: Some(CreateCommands::Server {
+                path: Some(path),
+                package_manager: Some(package_manager),
+            })
+        } if path == Path::new("backend") && package_manager.as_str() == "npm"
+    ));
 }
 
 #[test]
