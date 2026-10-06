@@ -174,6 +174,23 @@ fn create_server_accepts_a_target_path_and_package_manager() {
 }
 
 #[test]
+fn create_help_keeps_the_wizard_and_documents_server_scaffolding() {
+    let mut command = Cli::command();
+    let create = command.find_subcommand_mut("create").unwrap();
+    let create_help = create.render_long_help().to_string();
+    assert!(create_help.contains("interactive prompts"));
+    assert!(create_help.contains("server"));
+
+    let server_help = create
+        .find_subcommand_mut("server")
+        .unwrap()
+        .render_long_help()
+        .to_string();
+    assert!(server_help.contains("PATH"));
+    assert!(server_help.contains("package-manager"));
+}
+
+#[test]
 fn verbose_flag_is_available_after_a_subcommand() {
     let cli = Cli::try_parse_from(["bornengine", "doctor", "--verbose"]).unwrap();
     assert_eq!(cli.verbose, 1);

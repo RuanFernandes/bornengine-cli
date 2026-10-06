@@ -24,6 +24,7 @@ fn run_cli(root: &Path, args: &[&str], path: Option<&Path>) -> Output {
 struct FakeManager {
     path: PathBuf,
     args_file: PathBuf,
+    executable: PathBuf,
 }
 
 #[cfg(unix)]
@@ -54,6 +55,7 @@ fn fake_manager(root: &Path, manager: &str, exit_code: i32) -> FakeManager {
     FakeManager {
         path: search_path.into(),
         args_file,
+        executable: script,
     }
 }
 
@@ -97,6 +99,19 @@ fn create_server_uses_the_selected_colyseus_generator_and_writes_the_marker_afte
         assert_eq!(marker["version"], 1);
         assert_eq!(marker["provider"], "colyseus");
         assert_eq!(marker["clientProjectRoot"], "..");
+        let marker_text = fs::read_to_string(target.join("bornengine.server.json")).unwrap();
+        assert!(marker_text.ends_with('\n'));
+        assert_eq!(
+            marker_text,
+            "{\n  \"format\": \"bornengine.server\",\n  \"version\": 1,\n  \"provider\": \"colyseus\",\n  \"clientProjectRoot\": \"..\"\n}\n"
+        );
+        assert!(fs::read_dir(&target).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".bornengine.server.")
+        }));
     }
 }
 
@@ -183,6 +198,13 @@ fn create_server_accepts_a_nested_target_and_records_the_relative_client_root() 
     let marker: serde_json::Value =
         serde_json::from_slice(&fs::read(target.join("bornengine.server.json")).unwrap()).unwrap();
     assert_eq!(marker["clientProjectRoot"], "../..");
+    assert_eq!(
+        target
+            .join(marker["clientProjectRoot"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        root.canonicalize().unwrap()
+    );
 }
 
 #[cfg(unix)]
@@ -243,6 +265,76 @@ fn create_server_rejects_a_target_outside_the_bornengine_project() {
     assert_ne!(output.status.code(), Some(0));
     assert!(!fake.args_file.exists());
     assert!(String::from_utf8_lossy(&output.stderr).contains("inside the BornEngine project"));
+}
+
+#[cfg(unix)]
+#[test]
+fn create_server_rejects_a_symlink_path_that_escapes_the_project() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("game");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(&outside).unwrap();
+    write_bornengine_project(&root);
+    symlink(&outside, root.join("linked-server")).unwrap();
+    let fake = fake_manager(temp.path(), "npm", 0);
+    let output = Command::new(env!("CARGO_BIN_EXE_bornengine"))
+        .args([
+            "create",
+            "server",
+            "linked-server/server",
+            "--package-manager",
+            "npm",
+        ])
+        .current_dir(&root)
+        .env("PATH", &fake.path)
+        .env("BORNENGINE_TEST_ARGS_FILE", &fake.args_file)
+        .output()
+        .unwrap();
+
+    assert_ne!(output.status.code(), Some(0));
+    assert!(!fake.args_file.exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("symbolic links"));
+    assert!(!outside.join("server").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn create_server_preserves_generated_files_when_marker_creation_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write_bornengine_project(root);
+    let fake = fake_manager(root, "npm", 0);
+    fs::write(
+        &fake.executable,
+        "#!/bin/sh\nlast=''\nfor arg in \"$@\"; do last=\"$arg\"; done\nmkdir -p \"$last\"\nprintf 'generated server files' > \"$last/package.json\"\nprintf 'owned by generator' > \"$last/bornengine.server.json\"\nexit 0\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&fake.executable).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&fake.executable, permissions).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bornengine"))
+        .args(["create", "server", "--package-manager", "npm"])
+        .current_dir(root)
+        .env("PATH", &fake.path)
+        .output()
+        .unwrap();
+
+    assert_ne!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("preserve the server"));
+    assert_eq!(
+        fs::read_to_string(root.join("server/package.json")).unwrap(),
+        "generated server files"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("server/bornengine.server.json")).unwrap(),
+        "owned by generator"
+    );
 }
 
 #[cfg(unix)]

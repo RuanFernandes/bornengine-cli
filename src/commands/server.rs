@@ -4,13 +4,14 @@ use crate::package_manager::PackageManager;
 use crate::process::inherited_command;
 use crate::project::find_project_root;
 use anyhow::{Context, Result, bail};
-use serde_json::json;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const SERVER_MARKER_FILE: &str = "bornengine.server.json";
+static MARKER_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn create(
     requested_path: Option<&Path>,
@@ -175,8 +176,20 @@ fn ensure_target_available(target: &Path) -> Result<()> {
 }
 
 fn write_server_marker(project_root: &Path, server_root: &Path) -> Result<()> {
+    let project_root = project_root
+        .canonicalize()
+        .context("could not resolve the BornEngine project root for its server marker")?;
+    let server_root = server_root
+        .canonicalize()
+        .context("could not resolve the generated server directory for its BornEngine marker")?;
+    if server_root == project_root || !server_root.starts_with(&project_root) {
+        bail!(
+            "generated server directory must resolve to a strict child inside the BornEngine project"
+        );
+    }
+
     let relative_server = server_root
-        .strip_prefix(project_root)
+        .strip_prefix(&project_root)
         .context("server destination is not inside the BornEngine project")?;
     let depth = relative_server
         .components()
@@ -186,38 +199,88 @@ fn write_server_marker(project_root: &Path, server_root: &Path) -> Result<()> {
     for _ in 0..depth {
         relative_client_root.push("..");
     }
+    let resolved_client_root = server_root
+        .join(&relative_client_root)
+        .canonicalize()
+        .context("could not resolve the server marker's client project path")?;
+    if resolved_client_root != project_root {
+        bail!("server marker path does not resolve exactly to the owning BornEngine project");
+    }
     let relative_client_root = relative_client_root.to_string_lossy().replace('\\', "/");
-    let marker = json!({
-        "format": "bornengine.server",
-        "version": 1,
-        "provider": "colyseus",
-        "clientProjectRoot": relative_client_root,
-    });
+    let marker = ServerMarker {
+        format: "bornengine.server",
+        version: 1,
+        provider: "colyseus",
+        client_project_root: &relative_client_root,
+    };
     let mut contents = serde_json::to_vec_pretty(&marker)
         .context("could not serialize the BornEngine server marker")?;
     contents.push(b'\n');
 
     let marker_path = server_root.join(SERVER_MARKER_FILE);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&marker_path)
-        .with_context(|| {
+    let temporary_path = write_marker_temporary_file(&server_root, &contents)?;
+    if let Err(error) = fs::hard_link(&temporary_path, &marker_path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error).with_context(|| {
             format!(
                 "the Colyseus server was generated at {}, but its BornEngine marker could not be created at {}; preserve the server and create the marker manually",
                 server_root.display(),
                 marker_path.display()
             )
-        })?;
-    if let Err(error) = file.write_all(&contents) {
-        let _ = fs::remove_file(&marker_path);
-        return Err(error).with_context(|| {
-            format!(
-                "the Colyseus server was generated at {}, but writing {} failed; preserve the server and create the marker manually",
-                server_root.display(),
-                marker_path.display()
-            )
         });
     }
+    let _ = fs::remove_file(&temporary_path);
     Ok(())
+}
+
+fn write_marker_temporary_file(server_root: &Path, contents: &[u8]) -> Result<PathBuf> {
+    for _ in 0..32 {
+        let sequence = MARKER_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary_path = server_root.join(format!(
+            ".bornengine.server.{}.{}.tmp",
+            std::process::id(),
+            sequence
+        ));
+        let mut file = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "the Colyseus server was generated at {}, but a temporary BornEngine marker could not be created; preserve the server and create the marker manually",
+                        server_root.display()
+                    )
+                });
+            }
+        };
+
+        if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error).with_context(|| {
+                format!(
+                    "the Colyseus server was generated at {}, but the temporary BornEngine marker could not be written; preserve the server and create the marker manually",
+                    server_root.display()
+                )
+            });
+        }
+        return Ok(temporary_path);
+    }
+
+    bail!(
+        "the Colyseus server was generated at {}, but a unique temporary BornEngine marker file could not be allocated; preserve the server and create the marker manually",
+        server_root.display()
+    )
+}
+
+#[derive(serde::Serialize)]
+struct ServerMarker<'a> {
+    format: &'static str,
+    version: u8,
+    provider: &'static str,
+    #[serde(rename = "clientProjectRoot")]
+    client_project_root: &'a str,
 }

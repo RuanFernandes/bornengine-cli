@@ -35,6 +35,7 @@ bornengine run main.ts
 | Command | Purpose |
 | --- | --- |
 | `bornengine create` | Interactively select a project name, 2D/2.5D/3D profile, package manager, and stable engine version from npm. |
+| `bornengine create server [path]` | Scaffold a Colyseus server inside the current BornEngine project and write its project association marker. |
 | `bornengine new <name>` | Create a project with a 2D/2.5D/3D native feature profile and install its dependencies. |
 | `bornengine --add-ai-docs <filename>` | Write the BornEngine AI guide to `<filename>.md` in the current directory without overwriting files. |
 | `bornengine init` | Add a profile-configured project scaffold to an otherwise empty directory. It refuses to overwrite generated files. |
@@ -63,6 +64,8 @@ Examples:
 
 ```sh
 bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.15.0
+bornengine create server
+bornengine create server backend --package-manager npm
 bornengine --add-ai-docs game-context
 bornengine new MyScriptedGame --native-features sqlite,scripting
 bornengine new MyAdventure --game-type 2.5d
@@ -99,6 +102,14 @@ Use `bornengine cache warm` inside an installed BornEngine project to compile th
 The package manager can be shortened to `--pm`; `--engine` aliases `--engine-path`. `-o` is the friendly OS selector, and `-n` / `--name` sets the output name. `--os` and `--target` are mutually exclusive.
 
 Scaffolding never deletes or overwrites existing files. `new` refuses a populated target directory, and `init` creates only files that do not already exist. `--add-ai-docs` also refuses to overwrite its destination and appends `.md` when the supplied filename does not already end with that extension. There is intentionally no `--force` option.
+
+`bornengine create server` runs the official Colyseus project generator in a
+BornEngine game. It defaults to the project's `server/` directory, uses the
+configured package manager unless `--package-manager` overrides it, and writes
+`server/bornengine.server.json` only after the generator succeeds. A custom
+relative or absolute destination must remain inside the BornEngine project and
+must be empty if it already exists. The marker links the server folder back to
+the client project so BornEngineTools can identify valid server destinations.
 
 ## Engine dependency and local development
 
