@@ -1,6 +1,6 @@
 # BornEngine — AI context reference for language models
 
-This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.15.0`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
+This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.16.0`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
 
 ## Rules for writing or reviewing code
 
@@ -18,7 +18,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 
 Game code uses TypeScript classes; Perry compiles it ahead of time and communicates with Rust layers through a private FFI. Shared Rust code lives in `native/shared/`; the `native/<platform>/` crates connect the runtime to the host. Classes, services, factories, and ownership are the game-facing API. Numeric handles and FFI functions are internal details and must not appear in public examples.
 
-The package prepared for this release is version `0.15.0`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
+The package prepared for this release is version `0.16.0`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
 
 ## Creating a game
 
@@ -60,7 +60,7 @@ if (!game.isReady) console.error(game.error);
 else game.run();
 ```
 
-`Game` provides `window`, `renderer`, `input`, `audio`, `scenes`, `sceneGraph`, `mobile`, `ui`, `debugUi`, `assets`, and `scripting`. `run()` manages standalone frames and shutdown; `stop()` requests an orderly shutdown; `dispose()` releases the runtime outside the normal loop. A host that already owns the window and scheduler uses `runFrame(deltaTime, callbacks)`. Only one native runtime may be active per process.
+`Game` provides `window`, `renderer`, `input`, `audio`, `scenes`, `sceneGraph`, `mobile`, `ui`, `gui`, `debugUi`, `assets`, and `scripting`. `run()` manages standalone frames and shutdown; `stop()` requests an orderly shutdown; `dispose()` releases the runtime outside the normal loop. A host that already owns the window and scheduler uses `runFrame(deltaTime, callbacks)`. Only one native runtime may be active per process.
 
 ## Scenes, objects, and components
 
@@ -160,8 +160,34 @@ There is no public `Navigation2D` class or weighted navigation mesh in this vers
 
 - Audio: `game.audio` creates/loads `Sound` and `Music`; `AudioEmitter2D` is a positional 2D component. Audio services advance through the `Game` loop.
 - Input: `game.input` reads keyboard/mouse/gamepad and supports `InputActionMap`. `game.mobile` provides virtual joysticks and buttons; `movementInput()` combines keyboard input, while gamepad/joystick input takes precedence above the deadzone.
-- UI: `game.ui` is the game UI API and should be kept separate from diagnostic UI.
+- UI: `game.ui` is immediate-mode game UI; `game.gui` is the retained, object-oriented GUI tree. Keep both separate from diagnostic UI (`game.debugUi`).
 - Debug: `game.debugUi` provides an inspector and Dear ImGui windows. It is opt-in and requires the `debug-ui` feature in native Linux/macOS/Windows builds. It is unavailable on Web, Apple mobile, and watchOS.
+
+## Retained GUI controls
+
+`game.gui` provides reusable, retained 2D controls; `game.ui` remains the immediate-mode API. Controls are `GUI` subclasses and can be extended or composed. Import them from `@bornengine/engine` or `@bornengine/engine/gui`, attach root controls with `game.gui.addControl(root)`, and attach children with `parent.addControl(child)`. A control belongs to at most one parent. `parent` and `getParent()` are read-only; `getControls()`, `getRoot()`, `removeControl()`, and `clearControls()` manage the tree.
+
+Control positions are logical-pixel offsets relative to the parent content area. `GUIControlOptions.position` accepts `Vector2D` or any `{ x, y }` value; numeric `x`/`y` options remain supported and override their matching component. `getPosition()` returns a detached `Vector2D` snapshot. `setPosition(vector)` and `setPosition(x, y)` both work; `moveBy(offset)` translates both axes. `getX()`/`setX()`, `getY()`/`setY()`, `getSize()`/`setSize(width, height)`, `center()`, `centerHorizontal()`, and `centerVertical()` are available. `localToGlobal(point)` and `globalToLocal(point)` accept vector-like values and return `Vector2D` snapshots. Width and height stay independent dimensions.
+
+```ts
+import { GuiButton, GuiPanel, GuiScroll, Vector2D } from '@bornengine/engine';
+
+class InventoryScroll extends GuiScroll {}
+
+const panel = new GuiPanel({ position: new Vector2D(24, 24), width: 320, height: 240 });
+const scroll = new InventoryScroll({ position: Vector2D.zero(), width: 280, height: 180 });
+scroll.center().moveBy(Vector2D.right().scale(12));
+scroll.addControl(new GuiButton({ position: new Vector2D(8, 8), width: 160, height: 32 }));
+panel.addControl(scroll);
+// Attach this root to the current Game instance.
+game.gui.addControl(panel);
+```
+
+Built-in control families include layout (`GuiWindow`, `GuiPanel`, `GuiScroll`, `GuiBitmapBorder`, `GuiStretch`, `GuiFrameSet`), buttons and values (`GuiButton`, `GuiCheckBox`, `GuiRadioButton`, `GuiBitmapButton`, `GuiSlider`), text/editing (`GuiText`, `GuiMLText`, `GuiTextEdit`, `GuiMLTextEdit`, `GuiTextEditSlider`), selection/navigation (`GuiArray`, `GuiPopUpMenu`, `GuiPopUpEdit`, `GuiTreeView`, `GuiTextList`, `GuiTab`, `GuiMenu`, `GuiContextMenu`), and display (`GuiBitmap`, `GuiShowImg`, `GuiProgress`, `GuiDrawingPanel`). `GuiContextMenu.openAt(position, button)` accepts a vector-like position and keeps the numeric overload `openAt(x, y, button)`. Consult the controls guide for each class's methods and options.
+
+`GuiProfile`/`GUIProfiles` configure colors, fonts, alignment, spacing, borders, opacity, shadows, focus, and cursor. Controls can share a profile or clone one with `setOwnProfile()`. Override hooks such as `onAction`, `onChange`, focus, pointer, and key callbacks; events bubble to parents and support `stopPropagation()`. Events expose `localPosition` and `globalPosition` as `Vector2D` snapshots while retaining scalar coordinate fields. Native responses are applied before the next `Game.loop()`; the GUI does not automatically consume game input, so check `game.gui.wantsPointerInput()` and `wantsKeyboardInput()`.
+
+**watchOS:** retained GUI controls currently do not render and GUI input/events are unavailable. This is a temporary limitation; a future SwiftUI adapter is planned without a delivery date. Check `game.gui.isAvailable()` before relying on GUI behavior on a target.
 
 ## SQLite persistence
 
@@ -255,6 +281,7 @@ The root import `@bornengine/engine` is appropriate for game code. Public subpat
 | `@bornengine/engine/input` | `InputSystem`, `InputActionMap` |
 | `@bornengine/engine/mobile` | Virtual joysticks and touch buttons |
 | `@bornengine/engine/ui` | Game UI |
+| `@bornengine/engine/gui` | Retained GUI controls, profiles, and events |
 | `@bornengine/engine/debug-ui` | Dear ImGui inspector |
 | `@bornengine/engine/storage` | Typed SQLite `GameDatabase` |
 | `@bornengine/engine/scripting` | `ScriptRuntime`, `ScriptComponent` |
@@ -271,6 +298,7 @@ Use examples from the repository as recipes that should compile with the current
 - Ownership and preload: [`api/assets`](webpage/src/content/docs/api/assets.md)
 - Complete 2D guide: [`guides/2d-game`](webpage/src/content/docs/guides/2d-game.md)
 - Sprites/animation/particles: [`api/sprites`](webpage/src/content/docs/api/sprites.md)
+- Retained GUI: [`api/gui`](webpage/src/content/docs/api/gui.md), [`guides/gui-controls`](webpage/src/content/docs/guides/gui-controls.md)
 - 2D physics: [`api/physics2d`](webpage/src/content/docs/api/physics2d.md)
 - World2D/Tiled: [`api/world2d`](webpage/src/content/docs/api/world2d.md), [`cli/import`](webpage/src/content/docs/cli/import.md)
 - 3D: [`api/models`](webpage/src/content/docs/api/models.md), [`api/physics`](webpage/src/content/docs/api/physics.md)
