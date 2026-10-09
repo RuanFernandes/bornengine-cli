@@ -203,7 +203,7 @@ pub fn dev(entry_file: &Path, watch: bool, options: BuildOptions<'_>) -> Result<
         environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
     }
     let command_result = inherited_command_with_env(
-        "perry",
+        &crate::perry::program(),
         &args,
         Some(&context.project_root),
         options.verbose,
@@ -258,7 +258,12 @@ pub fn check(
     let context = resolve_context(entry_file, os, exact_target, verbose)?;
     let target = context.target.perry_target.as_deref();
     let args = perry_check_args(&context.entry, target, verbose, check_options);
-    let exit_code = inherited_command("perry", &args, Some(&context.project_root), verbose)?;
+    let exit_code = inherited_command(
+        &crate::perry::program(),
+        &args,
+        Some(&context.project_root),
+        verbose,
+    )?;
     if exit_code == 0 {
         println!(
             "{}",
@@ -323,7 +328,7 @@ fn resolve_context(
 
 fn perry_capabilities(verbose: bool) -> Result<PerryCapabilities> {
     let args = [OsString::from("compile"), OsString::from("--help")];
-    let output = captured_command("perry", &args, None, verbose)?;
+    let output = captured_command(&crate::perry::program(), &args, None, verbose)?;
     ensure_success("perry compile --help", &output)?;
     let help = format!(
         "{}\n{}",
@@ -347,7 +352,10 @@ fn run_perry_compile(
     if verbose {
         eprintln!(
             "{}",
-            ui::paint_stderr(display_command("perry", &args), Tone::Accent)
+            ui::paint_stderr(
+                display_command(&crate::perry::program(), &args),
+                Tone::Accent
+            )
         );
     }
     let profile_proxy = profile_proxy(context, development)?;
@@ -358,7 +366,13 @@ fn run_perry_compile(
         environment.extend(cargo_target_dir_environment_from(&context.project_root)?);
     }
     ui::run_with_elapsed("Compiling", || {
-        streamed_command_with_env("perry", &args, Some(working_directory), false, &environment)
+        streamed_command_with_env(
+            &crate::perry::program(),
+            &args,
+            Some(working_directory),
+            false,
+            &environment,
+        )
     })
 }
 

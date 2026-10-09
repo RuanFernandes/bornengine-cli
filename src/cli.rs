@@ -217,6 +217,11 @@ pub enum Commands {
     },
     /// Check how to install a newer CLI release.
     Update,
+    /// Manage the Perry compiler that builds BornEngine games.
+    Perry {
+        #[command(subcommand)]
+        command: PerryCommands,
+    },
     /// Read or update global CLI configuration.
     Config {
         #[command(subcommand)]
@@ -309,6 +314,17 @@ pub enum AssetCommands {
         #[arg(long, required = true, help = "Directory where assets will be copied")]
         output: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PerryCommands {
+    /// Download the Perry compiler from a BornEngine release.
+    Install {
+        #[arg(long, help = "BornEngine release tag (default: latest)")]
+        release: Option<String>,
+    },
+    /// Print the Perry compiler this CLI will run.
+    Path,
 }
 
 #[derive(Debug, Subcommand)]
