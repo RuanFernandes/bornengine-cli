@@ -48,6 +48,8 @@ bornengine run main.ts
 | `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
 | `bornengine assets pack [project-root] --output <directory>` | Copy project assets and write a deterministic SHA-256 manifest. |
 | `bornengine clean` | Remove only build files recorded by this CLI. |
+| `bornengine perry install [--release <tag>]` | Download the Perry compiler for this host from a BornEngine GitHub release (latest by default), verify its SHA-256, and use it for builds. |
+| `bornengine perry path` | Show the Perry compiler builds will run. |
 | `bornengine doctor` | Check Perry, Rust, the package manager, the project, and host prerequisites. |
 | `bornengine info` / `version` | Show CLI, engine, Perry, project, and host details. |
 | `bornengine engine current` | Show the project's selected engine dependency. |
@@ -192,7 +194,7 @@ For the browsable command reference and configuration guide, see [Asset audit in
 
 ## Troubleshooting
 
-- **Perry not found:** install Perry and make sure `perry` is on `PATH`, then run `bornengine doctor`.
+- **Perry not found:** run `bornengine perry install`, or make `perry` available on `PATH`, then run `bornengine doctor`. `BORNENGINE_PERRY` selects a specific binary.
 - **Package manager missing:** install the selected manager. For the default, install Node.js and run `npm install --global pnpm`.
 - **Linux game prerequisites:** a native Linux engine build needs `pkg-config`, X11/XI headers, and ALSA headers. On Debian/Ubuntu: `sudo apt install pkg-config libx11-dev libxi-dev libasound2-dev`.
 - **A Perry runtime archive is missing:** Perry's native linker needs its target runtime library. Follow the diagnostic from Perry to install/build that matching runtime; the CLI does not update Perry automatically.
