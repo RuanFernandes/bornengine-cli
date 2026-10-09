@@ -16,6 +16,26 @@ pub fn execute(command: PerryCommands) -> Result<i32> {
             }
         }
         PerryCommands::Path => println!("{}", perry::program()),
+        PerryCommands::List => {
+            let releases = perry::installed_releases()?;
+            if releases.is_empty() {
+                println!("No Perry compilers installed. Run `bornengine perry install`.");
+            }
+            for release in releases {
+                let marker = if release.current { " (current)" } else { "" };
+                println!("{}{marker}", release.tag);
+            }
+        }
+        PerryCommands::Clean { dry_run } => {
+            let removed = perry::clean(dry_run)?;
+            if removed.is_empty() {
+                println!("Nothing to remove.");
+            }
+            let verb = if dry_run { "Would remove" } else { "Removed" };
+            for path in removed {
+                println!("{verb} {}", path.display());
+            }
+        }
     }
     Ok(0)
 }

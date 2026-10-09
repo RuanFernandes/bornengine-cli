@@ -325,6 +325,13 @@ pub enum PerryCommands {
     },
     /// Print the Perry compiler this CLI will run.
     Path,
+    /// List Perry compilers installed by `bornengine perry install`.
+    List,
+    /// Remove installed Perry compilers other than the current one.
+    Clean {
+        #[arg(long, help = "Show what would be removed without deleting anything")]
+        dry_run: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

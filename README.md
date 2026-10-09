@@ -50,6 +50,8 @@ bornengine run main.ts
 | `bornengine clean` | Remove only build files recorded by this CLI. |
 | `bornengine perry install [--release <tag>]` | Download the Perry compiler for this host from a BornEngine GitHub release (latest by default), verify its SHA-256, and use it for builds. |
 | `bornengine perry path` | Show the Perry compiler builds will run. |
+| `bornengine perry list` | List Perry compilers installed by `perry install`; the active one is marked `(current)`. |
+| `bornengine perry clean [--dry-run]` | Remove installed Perry compilers other than the current one, plus interrupted downloads. Use `--dry-run` to list them first. |
 | `bornengine doctor` | Check Perry, Rust, the package manager, the project, and host prerequisites. |
 | `bornengine info` / `version` | Show CLI, engine, Perry, project, and host details. |
 | `bornengine engine current` | Show the project's selected engine dependency. |

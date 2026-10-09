@@ -14,6 +14,12 @@ const PROGRAM_ENV: &str = "BORNENGINE_PERRY";
 const CURRENT_FILE: &str = "current";
 const COMMIT_FILE: &str = "PERRY_COMMIT";
 
+pub struct InstalledRelease {
+    pub tag: String,
+    pub path: PathBuf,
+    pub current: bool,
+}
+
 pub struct Installed {
     pub release: String,
     pub program: PathBuf,
@@ -96,17 +102,90 @@ fn resolve_program(override_path: Option<&str>, installed: Option<&Path>) -> Str
 
 fn installed_program() -> Result<Option<PathBuf>> {
     let root = managed_root()?;
-    let current = match fs::read_to_string(root.join(CURRENT_FILE)) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let tag = current.trim();
-    if validate_tag(tag).is_err() {
+    let Some(tag) = current_tag_in(&root)? else {
         return Ok(None);
-    }
+    };
     let program = root.join(tag).join("perry").join(executable_name());
     Ok(program.is_file().then_some(program))
+}
+
+fn current_tag_in(root: &Path) -> Result<Option<String>> {
+    match fs::read_to_string(root.join(CURRENT_FILE)) {
+        Ok(text) => {
+            let tag = text.trim();
+            Ok(validate_tag(tag).is_ok().then(|| tag.to_owned()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub fn installed_releases() -> Result<Vec<InstalledRelease>> {
+    installed_releases_in(&managed_root()?)
+}
+
+fn installed_releases_in(root: &Path) -> Result<Vec<InstalledRelease>> {
+    let Some(entries) = read_dir_if_exists(root)? else {
+        return Ok(Vec::new());
+    };
+    let current = current_tag_in(root)?;
+    let mut releases = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let tag = entry.file_name().to_string_lossy().into_owned();
+        if !entry.file_type()?.is_dir() || validate_tag(&tag).is_err() {
+            continue;
+        }
+        releases.push(InstalledRelease {
+            current: current.as_deref() == Some(tag.as_str()),
+            path: entry.path(),
+            tag,
+        });
+    }
+    releases.sort_by(|left, right| left.tag.cmp(&right.tag));
+    Ok(releases)
+}
+
+pub fn clean(dry_run: bool) -> Result<Vec<PathBuf>> {
+    clean_in(&managed_root()?, dry_run)
+}
+
+fn clean_in(root: &Path, dry_run: bool) -> Result<Vec<PathBuf>> {
+    let mut removable: Vec<PathBuf> = installed_releases_in(root)?
+        .into_iter()
+        .filter(|release| !release.current)
+        .map(|release| release.path)
+        .collect();
+    removable.extend(partial_dirs_in(root)?);
+    if !dry_run {
+        for path in &removable {
+            remove_dir_if_exists(path)?;
+        }
+    }
+    Ok(removable)
+}
+
+fn partial_dirs_in(root: &Path) -> Result<Vec<PathBuf>> {
+    let Some(entries) = read_dir_if_exists(root)? else {
+        return Ok(Vec::new());
+    };
+    let mut partials = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') && name.ends_with(".partial") && entry.file_type()?.is_dir() {
+            partials.push(entry.path());
+        }
+    }
+    Ok(partials)
+}
+
+fn read_dir_if_exists(root: &Path) -> Result<Option<fs::ReadDir>> {
+    match fs::read_dir(root) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn managed_root() -> Result<PathBuf> {
@@ -259,6 +338,55 @@ fn remove_dir_if_exists(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn make_root(entries: &[&str], current: Option<&str>) -> tempfile::TempDir {
+        let root = tempfile::tempdir().unwrap();
+        for entry in entries {
+            fs::create_dir_all(root.path().join(entry)).unwrap();
+        }
+        if let Some(tag) = current {
+            fs::write(root.path().join(CURRENT_FILE), format!("{tag}\n")).unwrap();
+        }
+        root
+    }
+
+    #[test]
+    fn lists_releases_in_order_and_marks_current() {
+        let root = make_root(&["v2", "v1"], Some("v1"));
+        fs::write(root.path().join("stray.txt"), b"not a release").unwrap();
+        let releases = installed_releases_in(root.path()).unwrap();
+        let tags: Vec<&str> = releases
+            .iter()
+            .map(|release| release.tag.as_str())
+            .collect();
+        assert_eq!(tags, ["v1", "v2"]);
+        assert!(releases[0].current);
+        assert!(!releases[1].current);
+    }
+
+    #[test]
+    fn clean_removes_other_releases_and_partials_but_keeps_current() {
+        let root = make_root(&["v1", "v2", ".v3.partial"], Some("v2"));
+        let planned = clean_in(root.path(), true).unwrap();
+        assert_eq!(planned.len(), 2);
+        assert!(root.path().join("v1").exists());
+        assert!(root.path().join(".v3.partial").exists());
+
+        let removed = clean_in(root.path(), false).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(root.path().join("v2").exists());
+        assert!(!root.path().join("v1").exists());
+        assert!(!root.path().join(".v3.partial").exists());
+        assert!(root.path().join(CURRENT_FILE).exists());
+    }
+
+    #[test]
+    fn clean_without_installs_is_a_no_op() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing");
+        assert!(installed_releases_in(&missing).unwrap().is_empty());
+        assert!(clean_in(&missing, false).unwrap().is_empty());
+    }
 
     #[test]
     fn maps_supported_hosts_to_release_assets() {
