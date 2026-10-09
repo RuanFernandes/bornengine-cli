@@ -142,6 +142,7 @@ pub fn captured_command_with_env(
     command
         .args(args)
         .envs(envs.iter().cloned())
+        .envs(crate::perry::runtime_dir_env(program))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(cwd) = cwd {
@@ -167,6 +168,7 @@ pub fn streamed_command_with_env(
     command
         .args(args)
         .envs(envs.iter().cloned())
+        .envs(crate::perry::runtime_dir_env(program))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(cwd) = cwd {
@@ -275,7 +277,10 @@ pub fn inherited_command_with_env(
 ) -> Result<i32> {
     let mut command = Command::new(program_for_spawn(program));
     configure_child_linkers(&mut command);
-    command.args(args).envs(envs.iter().cloned());
+    command
+        .args(args)
+        .envs(envs.iter().cloned())
+        .envs(crate::perry::runtime_dir_env(program));
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }

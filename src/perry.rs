@@ -11,6 +11,7 @@ const RELEASES_API: &str = "https://api.github.com/repos/RuanFernandes/BornEngin
 const RELEASES_API_ENV: &str = "BORNENGINE_RELEASES_API";
 const CHECKSUMS_ASSET: &str = "perry-SHA256SUMS.txt";
 const PROGRAM_ENV: &str = "BORNENGINE_PERRY";
+const RUNTIME_DIR_ENV: &str = "PERRY_RUNTIME_DIR";
 const CURRENT_FILE: &str = "current";
 const COMMIT_FILE: &str = "PERRY_COMMIT";
 
@@ -98,6 +99,23 @@ fn resolve_program(override_path: Option<&str>, installed: Option<&Path>) -> Str
         return path.to_string_lossy().into_owned();
     }
     "perry".to_owned()
+}
+
+/// Perry looks for its runtime libraries next to the binary on Unix, but not on Windows,
+/// so a managed compiler gets its directory as `PERRY_RUNTIME_DIR` unless the user set one.
+pub fn runtime_dir_env(program: &str) -> Option<(&'static str, PathBuf)> {
+    if std::env::var_os(RUNTIME_DIR_ENV).is_some_and(|dir| !dir.is_empty()) {
+        return None;
+    }
+    let installed = installed_program().ok().flatten()?;
+    runtime_dir_for(&installed, program).map(|dir| (RUNTIME_DIR_ENV, dir))
+}
+
+fn runtime_dir_for(installed: &Path, program: &str) -> Option<PathBuf> {
+    if installed.to_string_lossy() != program {
+        return None;
+    }
+    installed.parent().map(Path::to_path_buf)
 }
 
 fn installed_program() -> Result<Option<PathBuf>> {
@@ -443,6 +461,17 @@ mod tests {
             installed.to_string_lossy().into_owned()
         );
         assert_eq!(resolve_program(None, None), "perry");
+    }
+
+    #[test]
+    fn managed_compiler_gets_its_own_directory_as_runtime_dir() {
+        let installed = Path::new("/data/bornengine/perry/v1/perry/perry");
+        let program = installed.to_string_lossy().into_owned();
+        assert_eq!(
+            runtime_dir_for(installed, &program),
+            Some(PathBuf::from("/data/bornengine/perry/v1/perry"))
+        );
+        assert_eq!(runtime_dir_for(installed, "perry"), None);
     }
 
     #[test]
