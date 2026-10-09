@@ -18,7 +18,15 @@ The npm launcher downloads the matching native binary on first use and caches it
 cargo install --git https://github.com/RuanFernandes/bornengine-cli
 ```
 
-The downloaded native binary does not require Node.js; the npm launcher requires Node.js 18 or newer. Game projects need Perry and a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
+Install the Perry compiler that game builds use:
+
+```sh
+bornengine perry install
+```
+
+The command downloads the build for your platform from the latest BornEngine release and verifies its SHA-256 checksum before use. Pass `--release <tag>` to choose another release; `bornengine doctor` reports whether Perry is available.
+
+The downloaded native binary does not require Node.js; the npm launcher requires Node.js 18 or newer. Game projects also need a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
 
 ## Quick start
 
@@ -205,7 +213,7 @@ For the browsable command reference and configuration guide, see [Asset audit in
 
 ## Releases
 
-The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.5.0` produces standalone release assets and a SHA-256 manifest for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. The published `@bornengine/cli` package downloads and verifies the matching asset on first use. Alternatively, install from GitHub with Cargo as shown above.
+The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.6.0` produces standalone release assets and a SHA-256 manifest for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. The published `@bornengine/cli` package downloads and verifies the matching asset on first use. Alternatively, install from GitHub with Cargo as shown above.
 
 ## License
 
