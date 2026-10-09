@@ -3,7 +3,7 @@ use crate::build_artifacts::{
 };
 use crate::cargo_profile::{
     CargoProfileProxy, cargo_target_dir_environment_from, native_build_environment,
-    read_native_features, read_native_profile,
+    read_native_profile, select_native_features,
 };
 use crate::commands::assets::{pack_project, validate_project_assets};
 use crate::engine::{EngineDependency, engine_dependency};
@@ -195,7 +195,7 @@ pub fn dev(entry_file: &Path, watch: bool, options: BuildOptions<'_>) -> Result<
         &assets.watch_directories,
         options.verbose,
     );
-    let profile_proxy = profile_proxy(&context, !options.release)?;
+    let profile_proxy = profile_proxy(&context, !options.release, options.verbose)?;
     let mut environment = native_build_environment(!options.release, options.jobs);
     if let Some(profile_proxy) = profile_proxy.as_ref() {
         environment.extend_from_slice(profile_proxy.environment());
@@ -358,7 +358,7 @@ fn run_perry_compile(
             )
         );
     }
-    let profile_proxy = profile_proxy(context, development)?;
+    let profile_proxy = profile_proxy(context, development, verbose)?;
     let mut environment = native_build_environment(development, jobs);
     if let Some(profile_proxy) = profile_proxy.as_ref() {
         environment.extend_from_slice(profile_proxy.environment());
@@ -380,7 +380,11 @@ fn is_native_target(target: &ResolvedTarget) -> bool {
     !matches!(target.target, BuildTarget::Web | BuildTarget::Wasm)
 }
 
-fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<CargoProfileProxy>> {
+fn profile_proxy(
+    context: &BuildContext,
+    development: bool,
+    verbose: bool,
+) -> Result<Option<CargoProfileProxy>> {
     let (Some(_profile), Some(engine_root)) =
         (context.native_profile, context.engine_root.as_ref())
     else {
@@ -389,8 +393,9 @@ fn profile_proxy(context: &BuildContext, development: bool) -> Result<Option<Car
     if matches!(context.target.target, BuildTarget::Web | BuildTarget::Wasm) {
         return Ok(None);
     }
-    let features =
-        native_features_for_build(read_native_features(&context.project_root)?, development);
+    let selection = select_native_features(&context.project_root, Some(engine_root))?;
+    selection.report(verbose);
+    let features = native_features_for_build(selection.features, development);
     Ok(Some(CargoProfileProxy::new(
         &context.project_root,
         engine_root,

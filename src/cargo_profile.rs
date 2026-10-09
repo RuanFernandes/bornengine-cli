@@ -1,3 +1,4 @@
+use crate::feature_detection::{DetectedFeature, detect_native_features};
 use crate::process::executable_path_in_path;
 use crate::project::GameKind;
 use anyhow::{Context, Result, bail};
@@ -112,66 +113,164 @@ pub fn read_native_profile(project_root: &Path) -> Result<GameKind> {
     native_profile_from_config(&config, &path)
 }
 
+/// Native Cargo features chosen for a project, with the detections behind them.
+pub struct NativeFeatureSelection {
+    pub features: Vec<String>,
+    pub detected: Vec<DetectedFeature>,
+    /// Detected features the installed engine does not declare, so they were not enabled.
+    pub unsupported: Vec<DetectedFeature>,
+}
+
+impl NativeFeatureSelection {
+    pub fn report(&self, verbose: bool) {
+        if verbose {
+            for feature in &self.detected {
+                eprintln!(
+                    "native feature {}: {}:{}",
+                    feature.name,
+                    feature.file.display(),
+                    feature.line
+                );
+            }
+        }
+        for feature in &self.unsupported {
+            eprintln!(
+                "warning: native feature `{}` is used at {}:{}, but the installed BornEngine does not provide it; update `@bornengine/engine` to enable it",
+                feature.name,
+                feature.file.display(),
+                feature.line
+            );
+        }
+    }
+}
+
 pub fn read_native_features(project_root: &Path) -> Result<Vec<String>> {
+    select_native_features(project_root, None).map(|selection| selection.features)
+}
+
+/// Profile features, then features detected from the project's source (unless
+/// `[bornengine].auto_native_features = false`), then `[bornengine].native_features`.
+/// With an engine root, detected features the engine does not declare are skipped.
+pub fn select_native_features(
+    project_root: &Path,
+    engine_root: Option<&Path>,
+) -> Result<NativeFeatureSelection> {
     let (path, config) = read_project_config(project_root)?;
-    let Some(config) = config else {
-        return Ok(GameKind::TwoD
-            .native_features()
-            .iter()
-            .map(|feature| (*feature).to_owned())
-            .collect());
+    let profile = match config.as_ref() {
+        Some(config) => native_profile_from_config(config, &path)?,
+        None => GameKind::TwoD,
     };
-    let profile = native_profile_from_config(&config, &path)?;
     let mut features = profile
         .native_features()
         .iter()
         .map(|feature| (*feature).to_owned())
         .collect::<Vec<_>>();
-    if let Some(extra) = config
-        .get("bornengine")
-        .and_then(|section| section.get("native_features"))
-    {
-        let extra = extra
-            .as_array()
-            .context("`bornengine.native_features` must be an array")?;
-        for feature in extra {
-            let feature = feature
-                .as_str()
-                .context("each `bornengine.native_features` entry must be a string")?;
-            if feature.is_empty()
-                || !feature.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
-                })
-            {
-                bail!(
-                    "invalid BornEngine native feature `{feature}` in {}",
-                    path.display()
-                );
-            }
-            if !features.iter().any(|existing| existing == feature) {
-                features.push(feature.to_owned());
+
+    let mut detected = Vec::new();
+    let mut unsupported = Vec::new();
+    if auto_native_features(config.as_ref())? {
+        for feature in detect_native_features(project_root)? {
+            if engine_root.is_none_or(|root| engine_declares_feature(root, feature.name)) {
+                push_unique(&mut features, feature.name);
+                detected.push(feature);
+            } else {
+                unsupported.push(feature);
             }
         }
     }
-    let has_explicit_profile = config
-        .get("bornengine")
-        .and_then(|section| section.get("native_profile"))
-        .is_some();
-    if !has_explicit_profile {
-        if let Some(legacy) = config
-            .get("native-library")
-            .and_then(|section| section.get("@bornengine/engine"))
-            .and_then(|library| library.get("features"))
-            .and_then(toml::Value::as_array)
+
+    if let Some(config) = config {
+        if let Some(extra) = config
+            .get("bornengine")
+            .and_then(|section| section.get("native_features"))
         {
-            for feature in legacy.iter().filter_map(toml::Value::as_str) {
-                if !features.iter().any(|existing| existing == feature) {
-                    features.push(feature.to_owned());
+            let extra = extra
+                .as_array()
+                .context("`bornengine.native_features` must be an array")?;
+            for feature in extra {
+                let feature = feature
+                    .as_str()
+                    .context("each `bornengine.native_features` entry must be a string")?;
+                if feature.is_empty()
+                    || !feature.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || character == '-' || character == '_'
+                    })
+                {
+                    bail!(
+                        "invalid BornEngine native feature `{feature}` in {}",
+                        path.display()
+                    );
+                }
+                push_unique(&mut features, feature);
+            }
+        }
+        let has_explicit_profile = config
+            .get("bornengine")
+            .and_then(|section| section.get("native_profile"))
+            .is_some();
+        if !has_explicit_profile {
+            if let Some(legacy) = config
+                .get("native-library")
+                .and_then(|section| section.get("@bornengine/engine"))
+                .and_then(|library| library.get("features"))
+                .and_then(toml::Value::as_array)
+            {
+                for feature in legacy.iter().filter_map(toml::Value::as_str) {
+                    push_unique(&mut features, feature);
                 }
             }
         }
     }
-    Ok(features)
+    Ok(NativeFeatureSelection {
+        features,
+        detected,
+        unsupported,
+    })
+}
+
+fn push_unique(features: &mut Vec<String>, feature: &str) {
+    if !features.iter().any(|existing| existing == feature) {
+        features.push(feature.to_owned());
+    }
+}
+
+fn auto_native_features(config: Option<&toml::Value>) -> Result<bool> {
+    match config
+        .and_then(|config| config.get("bornengine"))
+        .and_then(|section| section.get("auto_native_features"))
+    {
+        None => Ok(true),
+        Some(value) => value
+            .as_bool()
+            .context("`bornengine.auto_native_features` must be a boolean"),
+    }
+}
+
+/// True when any native crate of the engine declares `feature`. An engine with
+/// no readable native manifest is assumed to support it, so test doubles and
+/// unusual layouts keep working.
+fn engine_declares_feature(engine_root: &Path, feature: &str) -> bool {
+    let Ok(entries) = fs::read_dir(engine_root.join("native")) else {
+        return true;
+    };
+    let mut readable = false;
+    for entry in entries.flatten() {
+        let Ok(contents) = fs::read_to_string(entry.path().join("Cargo.toml")) else {
+            continue;
+        };
+        let Ok(manifest) = toml::from_str::<toml::Value>(&contents) else {
+            continue;
+        };
+        readable = true;
+        let declared = manifest
+            .get("features")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|features| features.contains_key(feature));
+        if declared {
+            return true;
+        }
+    }
+    !readable
 }
 
 fn read_project_config(project_root: &Path) -> Result<(PathBuf, Option<toml::Value>)> {

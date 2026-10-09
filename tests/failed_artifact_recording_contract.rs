@@ -92,6 +92,7 @@ exit 19
         command
             .current_dir(self.project.path())
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("BORNENGINE_PERRY", self.fake_perry.path().join("perry"))
             .env("PERRY_TEST_LOG", &self.log)
             .args(arguments);
         if let Some((name, value)) = override_env {
@@ -109,6 +110,7 @@ exit 19
         command
             .current_dir(self.project.path())
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("BORNENGINE_PERRY", self.fake_perry.path().join("perry"))
             .env("PERRY_TEST_LOG", &self.log)
             .envs(environment.iter().copied())
             .args(arguments)

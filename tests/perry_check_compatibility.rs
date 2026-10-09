@@ -55,6 +55,7 @@ exit "${PERRY_EXIT:-0}"
         Command::new(env!("CARGO_BIN_EXE_bornengine"))
             .current_dir(self.project.path())
             .env("PATH", std::env::join_paths(path).unwrap())
+            .env("BORNENGINE_PERRY", self.perry_bin.path().join("perry"))
             .env("PERRY_ARGS_LOG", &self.args_log)
             .env("PERRY_EXIT", perry_exit)
             .args(arguments)

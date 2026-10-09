@@ -232,6 +232,8 @@ bornengine --add-ai-docs assistant-guide
 
 Extra features can be added to `[bornengine].native_features`, for example `debug-ui` in Linux/macOS/Windows builds. Native `bornengine run` and `bornengine dev` development builds also enable the `hot-reload` and `dev` features; `bornengine build` and commands passed `--release` keep those development-only features disabled. Set `BLOOM_NO_HOT_RELOAD=1` to disable asset and material file watchers at runtime. Direct Perry commands do not read the BornEngine profile; Web uses a precompiled WASM artifact and does not watch files. `bornengine dev --watch` separately watches source and asset directories to rebuild and restart the game.
 
+Two optional native features are enabled automatically from the game's TypeScript, so unused code is not linked: `multiplayer` (Colyseus SDK) when the project imports `@bornengine/engine/colyseus` or `ColyseusClient`/`Room` from `@bornengine/engine`, and `dialogs` (native file pickers) when it calls `openFileDialog` or `saveFileDialog`. Run `bornengine build -v` to see which source line enabled each one. Set `auto_native_features = false` under `[bornengine]` to turn detection off, and list features in `native_features` to force them on. A feature that is off does not break the link: Colyseus reports a `clientError` event and the dialogs return an empty string, both naming the missing feature.
+
 `bornengine create` and `bornengine new` include this guide in the generated project's root as `AGENTS.md`. To copy it into the current directory under another name, run `bornengine --add-ai-docs <filename>`; the CLI appends `.md` when needed and does not overwrite an existing file.
 
 Do not confuse engine commands with CLI updates:

@@ -6,6 +6,7 @@ pub mod commands;
 pub mod config;
 pub mod engine;
 pub mod engine_package;
+pub mod feature_detection;
 pub mod package_manager;
 pub mod perry;
 pub mod platform;

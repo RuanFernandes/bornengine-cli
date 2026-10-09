@@ -1,6 +1,6 @@
 use crate::cargo_profile::{
     args_with_profile, cargo_target_dir_environment_from, effective_cargo_target_dir_from,
-    native_build_environment, read_native_features, read_native_profile,
+    native_build_environment, read_native_profile, select_native_features,
 };
 use crate::cli::CacheCommands;
 use crate::engine::{EngineDependency, engine_dependency};
@@ -63,7 +63,9 @@ fn warm(release: bool, jobs: Option<usize>, verbose: bool) -> Result<i32> {
     let engine_root = installed_engine_root(&project_root, &dependency)?;
     let manifest = native_manifest_path(&engine_root, HostPlatform::current())?;
     let native_profile = read_native_profile(&project_root)?;
-    let mut features = read_native_features(&project_root)?;
+    let selection = select_native_features(&project_root, Some(&engine_root))?;
+    selection.report(verbose);
+    let mut features = selection.features;
     if !release && !features.iter().any(|feature| feature == "dev") {
         features.push("dev".to_owned());
     }

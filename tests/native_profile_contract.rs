@@ -1,4 +1,6 @@
-use bornengine_cli::cargo_profile::{args_with_profile, read_native_features, read_native_profile};
+use bornengine_cli::cargo_profile::{
+    args_with_profile, read_native_features, read_native_profile, select_native_features,
+};
 use bornengine_cli::project::GameKind;
 use std::ffi::OsString;
 use std::fs;
@@ -226,4 +228,168 @@ fn cargo_profile_proxy_forwards_selected_features_to_cargo() {
     );
     assert!(forwarded.lines().any(|line| line == "--features"));
     assert!(forwarded.lines().any(|line| line == "mp3"));
+}
+
+fn write_source(project: &std::path::Path, relative: &str, contents: &str) {
+    let path = project.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, contents).unwrap();
+}
+
+const COLYSEUS_IMPORT: &str = "import { ColyseusClient } from \"@bornengine/engine\";\n";
+
+#[test]
+fn detected_features_sit_between_profile_and_user_features_in_file_order() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("perry.toml"),
+        "[bornengine]\nnative_profile = \"2d\"\nnative_features = [\"debug-ui\", \"multiplayer\"]\n",
+    )
+    .unwrap();
+    write_source(project.path(), "src/net.ts", COLYSEUS_IMPORT);
+    write_source(
+        project.path(),
+        "src/files.ts",
+        "input.openFileDialog('', '');\n",
+    );
+
+    assert_eq!(
+        read_native_features(project.path()).unwrap(),
+        ["mp3", "dialogs", "multiplayer", "debug-ui"]
+    );
+}
+
+#[test]
+fn projects_without_perry_toml_still_detect_features() {
+    let project = tempfile::tempdir().unwrap();
+    write_source(project.path(), "main.ts", COLYSEUS_IMPORT);
+
+    assert_eq!(
+        read_native_features(project.path()).unwrap(),
+        ["mp3", "multiplayer"]
+    );
+}
+
+#[test]
+fn starter_game_enables_no_optional_features() {
+    let project = tempfile::tempdir().unwrap();
+    write_source(
+        project.path(),
+        "main.ts",
+        "import { Game } from \"@bornengine/engine\";\nnew Game({});\n",
+    );
+
+    assert_eq!(read_native_features(project.path()).unwrap(), ["mp3"]);
+}
+
+#[test]
+fn auto_detection_can_be_disabled() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("perry.toml"),
+        "[bornengine]\nnative_profile = \"2d\"\nauto_native_features = false\n",
+    )
+    .unwrap();
+    write_source(project.path(), "main.ts", COLYSEUS_IMPORT);
+
+    assert_eq!(read_native_features(project.path()).unwrap(), ["mp3"]);
+}
+
+#[test]
+fn auto_native_features_must_be_a_boolean() {
+    let project = tempfile::tempdir().unwrap();
+    fs::write(
+        project.path().join("perry.toml"),
+        "[bornengine]\nauto_native_features = \"no\"\n",
+    )
+    .unwrap();
+
+    let error = read_native_features(project.path()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("`bornengine.auto_native_features` must be a boolean"),
+        "{error:#}"
+    );
+}
+
+fn engine_with_features(root: &std::path::Path, features: &str) {
+    write_source(
+        root,
+        "native/shared/Cargo.toml",
+        &format!("[package]\nname = \"bloom-shared\"\n\n[features]\n{features}\n"),
+    );
+}
+
+#[test]
+fn a_feature_declared_by_any_native_crate_counts_as_supported() {
+    let project = tempfile::tempdir().unwrap();
+    let engine = tempfile::tempdir().unwrap();
+    engine_with_features(engine.path(), "mp3 = []");
+    write_source(
+        engine.path(),
+        "native/linux/Cargo.toml",
+        "[package]\nname = \"bloom-linux\"\n\n[features]\ndialogs = []\n",
+    );
+    write_source(
+        project.path(),
+        "src/files.ts",
+        "input.openFileDialog('', '');\n",
+    );
+
+    let selection = select_native_features(project.path(), Some(engine.path())).unwrap();
+    assert_eq!(selection.features, ["mp3", "dialogs"]);
+}
+
+#[test]
+fn an_engine_without_native_manifests_is_assumed_to_support_detected_features() {
+    let project = tempfile::tempdir().unwrap();
+    let engine = tempfile::tempdir().unwrap();
+    write_source(project.path(), "main.ts", COLYSEUS_IMPORT);
+
+    let selection = select_native_features(project.path(), Some(engine.path())).unwrap();
+    assert_eq!(selection.features, ["mp3", "multiplayer"]);
+}
+
+#[test]
+fn detected_features_the_engine_lacks_are_reported_not_enabled() {
+    let project = tempfile::tempdir().unwrap();
+    let engine = tempfile::tempdir().unwrap();
+    engine_with_features(engine.path(), "mp3 = []");
+    write_source(project.path(), "src/net.ts", COLYSEUS_IMPORT);
+
+    let selection = select_native_features(project.path(), Some(engine.path())).unwrap();
+    assert_eq!(selection.features, ["mp3"]);
+    assert!(selection.detected.is_empty());
+    assert_eq!(selection.unsupported.len(), 1);
+    assert_eq!(selection.unsupported[0].name, "multiplayer");
+    assert_eq!(selection.unsupported[0].line, 1);
+}
+
+#[test]
+fn detected_features_the_engine_declares_are_enabled() {
+    let project = tempfile::tempdir().unwrap();
+    let engine = tempfile::tempdir().unwrap();
+    engine_with_features(engine.path(), "mp3 = []\nmultiplayer = []");
+    write_source(project.path(), "src/net.ts", COLYSEUS_IMPORT);
+
+    let selection = select_native_features(project.path(), Some(engine.path())).unwrap();
+    assert_eq!(selection.features, ["mp3", "multiplayer"]);
+    assert_eq!(selection.detected.len(), 1);
+    assert!(selection.unsupported.is_empty());
+}
+
+#[test]
+fn explicit_features_are_never_filtered_by_the_engine_manifest() {
+    let project = tempfile::tempdir().unwrap();
+    let engine = tempfile::tempdir().unwrap();
+    engine_with_features(engine.path(), "mp3 = []");
+    fs::write(
+        project.path().join("perry.toml"),
+        "[bornengine]\nnative_features = [\"multiplayer\"]\n",
+    )
+    .unwrap();
+
+    let selection = select_native_features(project.path(), Some(engine.path())).unwrap();
+    assert_eq!(selection.features, ["mp3", "multiplayer"]);
 }
