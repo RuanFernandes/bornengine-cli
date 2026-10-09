@@ -11,7 +11,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 5. **Automatic scene rendering depends on the base method.** `Game.render()` draws the current scene. If a subclass overrides `render()`, call `super.render()` where scene components should be drawn.
 6. **Distinguish runtime settings from build settings.** `GameOptions.renderMode` selects the runtime rendering path. The `[bornengine].native_profile` profile in `perry.toml` selects Rust features used by the BornEngine CLI in native builds.
 7. **Check failures explicitly.** The engine uses values such as `isReady`, `isLoaded`, `error`, `null`, and results with `ok/status`. Read the API types and handle these results; do not assume every factory throws exceptions.
-8. **Do not promise features just because an old spec mentions them.** To consider a feature public, confirm it is exported by `package.json`/`src/index.ts`, implemented under `src/`, and has a current usage path. `docs/design/` and `docs/superpowers/` contain historical proposals and plans.
+8. **Do not promise features just because an old spec mentions them.** To consider a feature public, confirm it is exported by `package.json`/`src/index.ts`, implemented under `src/`, and has a current usage path. `docs/design/` contains historical proposals.
 9. **Do not invent Perry or platform capabilities.** Use `bornengine check main.ts` or the appropriate target checks before recommending syntax, dependencies, or APIs. Web, Apple, and scripting compatibility differences are described in this file and the platform pages.
 
 ## Architecture in one sentence

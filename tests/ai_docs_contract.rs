@@ -21,6 +21,13 @@ fn add_ai_docs_appends_markdown_and_writes_the_guide() {
     assert!(guide.contains("AStarGrid2D"));
     assert!(guide.contains("SeededRandom"));
     assert!(guide.contains("BLOOM_NO_HOT_RELOAD=1"));
+    assert!(guide.contains("## Retained GUI controls"));
+    assert!(guide.contains("game.gui"));
+    assert!(guide.contains("GuiScroll"));
+    assert!(guide.contains("new Vector2D(24, 24)"));
+    assert!(guide.contains("localPosition"));
+    assert!(guide.contains("watchOS"));
+    assert!(guide.contains("temporary limitation"));
 }
 
 #[test]

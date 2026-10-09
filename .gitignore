@@ -3,3 +3,5 @@
 /.superpowers/
 /dist/
 *.tmp
+/.worktrees/
+/docs/superpowers/
