@@ -18,7 +18,15 @@ The npm launcher downloads the matching native binary on first use and caches it
 cargo install --git https://github.com/RuanFernandes/bornengine-cli
 ```
 
-The downloaded native binary does not require Node.js; the npm launcher requires Node.js 18 or newer. Game projects need Perry and a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
+Install the Perry compiler that game builds use:
+
+```sh
+bornengine perry install
+```
+
+The command downloads the build for your platform from the latest BornEngine release and verifies its SHA-256 checksum before use. Pass `--release <tag>` to choose another release; `bornengine doctor` reports whether Perry is available.
+
+The downloaded native binary does not require Node.js; the npm launcher requires Node.js 18 or newer. Game projects also need a package manager; new projects default to `pnpm` and can also use `npm` or `yarn`.
 
 ## Quick start
 
@@ -48,6 +56,10 @@ bornengine run main.ts
 | `bornengine assets validate [project-root]` | Validate packaged asset roots and `.world2d.json` references. |
 | `bornengine assets pack [project-root] --output <directory>` | Copy project assets and write a deterministic SHA-256 manifest. |
 | `bornengine clean` | Remove only build files recorded by this CLI. |
+| `bornengine perry install [--release <tag>]` | Download the Perry compiler for this host from a BornEngine GitHub release (latest by default), verify its SHA-256, and use it for builds. |
+| `bornengine perry path` | Show the Perry compiler builds will run. |
+| `bornengine perry list` | List Perry compilers installed by `perry install`; the active one is marked `(current)`. |
+| `bornengine perry clean [--dry-run]` | Remove installed Perry compilers other than the current one, plus interrupted downloads. Use `--dry-run` to list them first. |
 | `bornengine doctor` | Check Perry, Rust, the package manager, the project, and host prerequisites. |
 | `bornengine info` / `version` | Show CLI, engine, Perry, project, and host details. |
 | `bornengine engine current` | Show the project's selected engine dependency. |
@@ -192,7 +204,7 @@ For the browsable command reference and configuration guide, see [Asset audit in
 
 ## Troubleshooting
 
-- **Perry not found:** install Perry and make sure `perry` is on `PATH`, then run `bornengine doctor`.
+- **Perry not found:** run `bornengine perry install`, or make `perry` available on `PATH`, then run `bornengine doctor`. `BORNENGINE_PERRY` selects a specific binary.
 - **Package manager missing:** install the selected manager. For the default, install Node.js and run `npm install --global pnpm`.
 - **Linux game prerequisites:** a native Linux engine build needs `pkg-config`, X11/XI headers, and ALSA headers. On Debian/Ubuntu: `sudo apt install pkg-config libx11-dev libxi-dev libasound2-dev`.
 - **A Perry runtime archive is missing:** Perry's native linker needs its target runtime library. Follow the diagnostic from Perry to install/build that matching runtime; the CLI does not update Perry automatically.
@@ -201,7 +213,7 @@ For the browsable command reference and configuration guide, see [Asset audit in
 
 ## Releases
 
-The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.5.0` produces standalone release assets and a SHA-256 manifest for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. The published `@bornengine/cli` package downloads and verifies the matching asset on first use. Alternatively, install from GitHub with Cargo as shown above.
+The CLI and engine have separate versions and release workflows. A CLI tag such as `v0.6.0` produces standalone release assets and a SHA-256 manifest for Linux x86-64, Windows x86-64, macOS x86-64, and macOS ARM64. The published `@bornengine/cli` package downloads and verifies the matching asset on first use. Alternatively, install from GitHub with Cargo as shown above.
 
 ## License
 

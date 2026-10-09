@@ -6,6 +6,7 @@ pub mod create;
 pub mod diagnostics;
 pub mod engine;
 pub mod import;
+pub mod perry;
 pub mod project;
 pub mod update;
 
@@ -123,6 +124,7 @@ pub fn execute(cli: Cli) -> Result<i32> {
             engine::upgrade(version.as_deref(), latest, verbose)
         }
         Commands::Update => update::check(),
+        Commands::Perry { command } => perry::execute(command),
         Commands::Config { command } => config::execute(command),
         Commands::Cache { command } => cache::execute(command, verbose),
         Commands::Import { command } => match command {

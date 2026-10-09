@@ -38,7 +38,7 @@ pub fn clean(verbose: bool) -> Result<i32> {
 pub fn doctor(verbose: bool) -> Result<i32> {
     println!("{}\n", ui::paint("BornEngine Doctor", Tone::Heading));
     let mut healthy = true;
-    let perry_version = check_version("Perry", "perry", "--version", &mut healthy);
+    let perry_version = check_version("Perry", &crate::perry::program(), "--version", &mut healthy);
     check_version("Rust", "rustc", "--version", &mut healthy);
     check_version("Cargo", "cargo", "--version", &mut healthy);
 
@@ -204,7 +204,7 @@ pub fn info() -> Result<i32> {
         HostPlatform::current(),
         std::env::consts::ARCH
     );
-    print_tool_version("Perry", "perry", "--version");
+    print_tool_version("Perry", &crate::perry::program(), "--version");
     print_tool_version("Rust", "rustc", "--version");
     let cwd = std::env::current_dir().context("could not determine current directory")?;
     if let Some(root) = find_project_root(&cwd)? {
@@ -236,7 +236,7 @@ pub fn version() -> Result<i32> {
             );
         }
     }
-    print_tool_version("Perry", "perry", "--version");
+    print_tool_version("Perry", &crate::perry::program(), "--version");
     Ok(0)
 }
 
@@ -283,7 +283,7 @@ fn command_text(executable: &str, args: &[&str]) -> Option<String> {
 
 fn compile_capabilities(verbose: bool) -> Result<PerryCapabilities> {
     let args = [OsString::from("compile"), OsString::from("--help")];
-    let output = captured_command("perry", &args, None, verbose)?;
+    let output = captured_command(&crate::perry::program(), &args, None, verbose)?;
     if !output.status.success() {
         anyhow::bail!(
             "`perry compile --help` exited with status {}",

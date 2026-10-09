@@ -1,6 +1,6 @@
 # BornEngine — AI context reference for language models
 
-This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.16.0`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
+This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.16.1`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
 
 ## Rules for writing or reviewing code
 
@@ -18,7 +18,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 
 Game code uses TypeScript classes; Perry compiles it ahead of time and communicates with Rust layers through a private FFI. Shared Rust code lives in `native/shared/`; the `native/<platform>/` crates connect the runtime to the host. Classes, services, factories, and ownership are the game-facing API. Numeric handles and FFI functions are internal details and must not appear in public examples.
 
-The package prepared for this release is version `0.16.0`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
+The package prepared for this release is version `0.16.1`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
 
 ## Creating a game
 
@@ -239,6 +239,7 @@ Do not confuse engine commands with CLI updates:
 - `bornengine engine install [version]`, `engine update`, `engine use`, and `upgrade [version]` change the project's BornEngine dependency and lockfile.
 - `bornengine engine list` lists releases available from the registry; it is not a list of engines installed in a local store.
 - `bornengine update` only checks for a CLI release and prints install instructions; it does not update the executable.
+- `bornengine perry install [--release <tag>]` downloads the Perry compiler for this host from a BornEngine release and verifies its SHA-256. `bornengine perry path`, `perry list`, and `perry clean [--dry-run]` show or remove managed Perry compilers.
 - `BORNENGINE_PATH` and `--engine-path` are inputs to `new`/`init`; `engine use <path>` takes its path positionally.
 - The CLI has no `bornengine script check` or `bornengine script pack` command.
 
