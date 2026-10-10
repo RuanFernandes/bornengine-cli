@@ -47,7 +47,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Commands {
     /// Create a BornEngine game project with interactive prompts.
-    Create,
+    Create {
+        #[command(subcommand)]
+        command: Option<CreateCommands>,
+    },
     /// Create a new BornEngine game project.
     New {
         #[arg(help = "Name of the new project directory")]
@@ -274,6 +277,25 @@ pub enum Commands {
         show_all: bool,
         #[arg(long, help = "Treat Perry compatibility warnings as errors")]
         strict: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CreateCommands {
+    /// Scaffold a Colyseus server associated with this BornEngine project.
+    Server {
+        #[arg(
+            value_name = "PATH",
+            help = "Server directory (defaults to <project>/server)"
+        )]
+        path: Option<PathBuf>,
+        #[arg(
+            long,
+            alias = "pm",
+            value_enum,
+            help = "Package manager to run the Colyseus scaffold with (default: configured manager)"
+        )]
+        package_manager: Option<PackageManager>,
     },
 }
 
