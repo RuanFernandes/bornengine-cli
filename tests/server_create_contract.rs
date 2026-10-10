@@ -1,8 +1,11 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::{Command, Output};
 use tempfile::TempDir;
 
+#[cfg(unix)]
 fn write_bornengine_project(root: &Path) {
     fs::write(
         root.join("package.json"),
@@ -85,7 +88,7 @@ fn create_server_uses_the_selected_colyseus_generator_and_writes_the_marker_afte
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let target = root.join("server");
+        let target = root.canonicalize().unwrap().join("server");
         let actual_args = fs::read_to_string(&fake.args_file).unwrap();
         assert_eq!(
             actual_args.lines().collect::<Vec<_>>(),
@@ -169,7 +172,7 @@ fn create_server_accepts_a_nested_target_and_records_the_relative_client_root() 
     let root = temp.path();
     write_bornengine_project(root);
     let fake = fake_manager(root, "npm", 0);
-    let target = root.join("services/arena");
+    let target = root.canonicalize().unwrap().join("services/arena");
     let output = Command::new(env!("CARGO_BIN_EXE_bornengine"))
         .args([
             "create",
@@ -337,7 +340,7 @@ fn create_server_preserves_generated_files_when_marker_creation_fails() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[test]
 fn create_server_uses_the_configured_package_manager_when_no_override_is_given() {
     let temp = TempDir::new().unwrap();

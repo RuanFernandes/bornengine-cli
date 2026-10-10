@@ -75,6 +75,11 @@ fn resolve_server_target(project_root: &Path, requested_path: Option<&Path>) -> 
         project_root.join(requested_path)
     };
     let candidate = normalize_absolute(&candidate)?;
+    let candidate = if candidate.starts_with(project_root) {
+        candidate
+    } else {
+        canonicalize_existing_prefix(&candidate)?
+    };
 
     if candidate == project_root || !candidate.starts_with(project_root) {
         bail!(
@@ -120,6 +125,38 @@ fn resolve_server_target(project_root: &Path, requested_path: Option<&Path>) -> 
     }
 
     Ok(candidate)
+}
+
+/// Resolves symlinks in the longest existing prefix so aliases such as macOS
+/// `/var` -> `/private/var` compare equal to the canonical project root.
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        match existing.canonicalize() {
+            Ok(real) => {
+                return Ok(missing
+                    .iter()
+                    .rev()
+                    .fold(real, |base, name| base.join(name)));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+                    bail!(
+                        "server path has no existing parent directory: {}",
+                        path.display()
+                    );
+                };
+                missing.push(name.to_owned());
+                existing = parent;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("could not inspect server path {}", existing.display())
+                });
+            }
+        }
+    }
 }
 
 fn normalize_absolute(path: &Path) -> Result<PathBuf> {
