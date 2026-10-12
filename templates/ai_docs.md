@@ -1,6 +1,6 @@
 # BornEngine — AI context reference for language models
 
-This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It reflects this repository's code; the package version prepared for this release is `0.16.1`. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
+This file summarizes BornEngine's public API and architectural decisions for assistants that write, review, or document games made with the engine. It describes the installed `@bornengine/engine` package. Always check `package.json`, exports, implementation, and examples before assuming that the version or behavior is still current.
 
 ## Rules for writing or reviewing code
 
@@ -11,14 +11,14 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 5. **Automatic scene rendering depends on the base method.** `Game.render()` draws the current scene. If a subclass overrides `render()`, call `super.render()` where scene components should be drawn.
 6. **Distinguish runtime settings from build settings.** `GameOptions.renderMode` selects the runtime rendering path. The `[bornengine].native_profile` profile in `perry.toml` selects Rust features used by the BornEngine CLI in native builds.
 7. **Check failures explicitly.** The engine uses values such as `isReady`, `isLoaded`, `error`, `null`, and results with `ok/status`. Read the API types and handle these results; do not assume every factory throws exceptions.
-8. **Do not promise features just because an old spec mentions them.** To consider a feature public, confirm it is exported by `package.json`/`src/index.ts`, implemented under `src/`, and has a current usage path. `docs/design/` contains historical proposals.
+8. **Do not promise features just because an old spec mentions them.** Before using a feature, confirm its name in the installed package's `exports` map and type declarations. Historical proposals do not prove that a feature exists.
 9. **Do not invent Perry or platform capabilities.** Use `bornengine check main.ts` or the appropriate target checks before recommending syntax, dependencies, or APIs. Web, Apple, and scripting compatibility differences are described in this file and the platform pages.
 
 ## Architecture in one sentence
 
-Game code uses TypeScript classes; Perry compiles it ahead of time and communicates with Rust layers through a private FFI. Shared Rust code lives in `native/shared/`; the `native/<platform>/` crates connect the runtime to the host. Classes, services, factories, and ownership are the game-facing API. Numeric handles and FFI functions are internal details and must not appear in public examples.
+Game code uses TypeScript classes; Perry compiles it ahead of time and communicates with Rust layers through a private FFI. Classes, services, factories, and ownership are the game-facing API. Numeric handles and FFI functions are internal details and must not appear in public examples.
 
-The package prepared for this release is version `0.16.1`. Current public exports are listed in `package.json` and the `src/index.ts` barrel. The stable module map appears below; confirm exports in those files before adding an import.
+The installed package version is in `package.json`. Current public exports are listed in the `exports` map. The module map appears below; confirm exports there before adding an import.
 
 ## Creating a game
 
@@ -87,6 +87,8 @@ class Level extends Scene {
 
 Visual components such as `SpriteRenderer`, `Tilemap`, and `ParticleEmitter2D` are drawn automatically by the scene. The scene collects enabled components on active objects, sorts them by `renderOrder`, and preserves insertion order for ties. When overriding `Game.render()`, clear the screen and call `super.render()` to keep this drawing behavior.
 
+Field annotations come from `@bornengine/engine/annotations` and run when the object is added to a `Scene`, before its `onAwake`. `@Asset(path, errCallback?)` assigns the scene-owned `Texture`; without `errCallback`, a failed load makes `scene.add()` throw the texture's `error`. `errCallback(error, path, retry)` replaces that default and its return value becomes the field value; `retry()` loads the asset again and returns the loaded `Texture`, or throws if it still fails. The callback may be `async`: `scene.add()` then returns the object at once, and it attaches and runs `onAwake` when the promise resolves. `scene.remove()` cancels a pending object. `addChild()` throws and the world loader returns `false` for async callbacks. Limitation: on native Linux builds, `Game.run()` does not drain JS promise jobs or timers, so async callbacks do not resolve during play yet; synchronous callbacks are unaffected. `@GameComponent()` assigns a new instance of the field's class type after `addComponent`; the class needs a no-argument constructor. An exception in `onAwake` leaves the object attached and the scene usable for later `add` calls.
+
 ## Resources and ownership
 
 ### Assets
@@ -119,9 +121,9 @@ BornEngine's current development focus is 2D. Use `Vector2D` for 2D math and vec
 
 `Vector2D` is a mutable value type with factories, getters, and static/instance operations. Instance methods: `clone`, `set`, `copy`; getters `magnitude`, `sqrMagnitude`, aliases `length`/`lengthSquared`, and `normalized`; operations `add`, `subtract`, `multiply`, `divide`, `scale`, `dotWith`, `crossWith`, `distanceTo`, `interpolatedTo`, `rotatedBy`, `clamped`, `clampedMagnitude`, `equals`, and `equalsApprox`. Static helpers: `zero`, `one`, `up`, `down`, `left`, `right`, `from`, `sum`, `difference`, `componentProduct`, `componentQuotient`, `scaled`, `normalize`, `magnitude`, `sqrMagnitude`, `dot`, `cross`, `distance`, `distanceSquared`, `min`, `max`, `clamp`, `clampMagnitude`, `lerp`, `lerpUnclamped`, `moveTowards`, `reflect`, `project`, `angle`, `signedAngle`, `rotate`, and `perpendicular`. Operations that produce a vector return a new instance; `set`/`copy` mutate the instance and return `this`. `angle` and `signedAngle` return degrees; `rotate` takes radians. `Vector2D.up()` means Cartesian +Y, while the engine's 2D physics uses positive Y downward; convert directions when crossing these conventions.
 
-`AStarGrid2D(width, height)` creates an open uniform-cost grid with up to 1,000,000 cells. Mark obstacles with `setWalkable`, then call `findPath(start, goal, options)` for a route including both endpoints or `null`. Orthogonal movement is the default; diagonal steps cost sqrt(2), and corner cutting stays disabled unless enabled. Per-cell terrain weights are not supported.
+`AStarGrid2D(width, height)` creates an open uniform-cost grid of up to 1,000,000 cells. Use `setWalkable(x, y, false)` for obstacles and `findPath(start, goal, options)` to get a route including both endpoints or `null`. Movement is orthogonal by default. `allowDiagonal: true` adds sqrt(2)-cost diagonal steps; `allowCornerCutting` is off by default. Terrain costs and navigation meshes are not part of this API.
 
-`SeededRandom(seed)` provides deterministic `next()`, half-open float `range(min, max)`, and inclusive integer `integer(min, max)` values without global random state. `Noise2D(seed)` provides smooth normalized `sample(x, y)` and normalized `fractal(x, y, options)` values for procedural terrain and other fields.
+`SeededRandom(seed)` provides deterministic `next()`, half-open float `range(min, max)`, and inclusive integer `integer(min, max)` values without global state. `Noise2D(seed)` provides smooth normalized `sample(x, y)` and normalized `fractal(x, y, options)` for deterministic terrain and procedural fields. Use separate generators for systems whose sequences must remain independent.
 
 ### Sprites and animation
 
@@ -129,10 +131,21 @@ BornEngine's current development focus is 2D. Use `Vector2D` for 2D math and vec
 - `SpriteRenderer extends GameComponent` draws a frame with size, pivot, tint, flips, and visibility; the object's world position, scale, and Z rotation are applied during drawing.
 - `SpriteAnimation` contains keyframes, duration/FPS, markers, and a `loop`, `once`, or `ping-pong` mode.
 - `SpriteAnimator` controls per-object clips and states with bool/number/trigger parameters, AND conditions, transitions in declared order, and optional crossfades.
+- Directional clips: pass `directions: { up, left, down, right }` instead of `frames` (each list needs at least one keyframe; counts may differ). `animator.setDir(dir)` selects the variant using Graal `dir` order: `0` up, `1` left, `2` down (default), `3` right; other values return `false`. Changing `dir` mid-playback keeps the frame index and elapsed time (clamped to shorter directions) without restarting or re-sending markers. Non-directional clips ignore `dir`. A directional clip's `frames`/`duration` describe its down variant, and `directions` holds the four variants in dir order.
 - `onMarker`, `onComplete`, and `onStateChanged` are hooks for gameplay and VFX. `seek()` does not fire markers by default. A `dt` that crosses multiple frames preserves marker order.
 - Calling `play()` again on the current clip does not restart it without `restart: true`; the default fade duration is zero.
 
 Attach the renderer and animator to the same `GameObject`. The scene handles update and drawing while the object is active. The 3D model `Animation` API remains separate.
+
+#### Reusable animation templates
+
+`.spriteanim-template.json` files use `bornengine.spriteanim-template` version 1 and store reusable clip timing plus ordered image layers. `SpriteAnimationTemplateAsset` validates a parsed JSON document; the engine does not add a general filesystem JSON loader. Bind loaded textures by the author-defined parameter IDs with `template.bind({ body_art: bodyTexture, held_item: swordTexture })`. IDs are arbitrary; labels and tags only organize the editor. Required inputs must be supplied, optional inputs may be omitted, and all supplied textures must belong to the same `Game` and contain every referenced crop.
+
+A successful binding returns per-binding `SpriteSheet`/`SpriteFrame` data and clips. Attach `new SpriteAnimationTemplateRenderer(binding, { size })` and `new SpriteAnimator(renderer, { clips: binding.clips })` to one `GameObject`, then call `animator.play('walk')`. A frame may draw multiple layers in bottom-to-top order. Crop values use source-image pixels; offsets are relative to the clip canvas center, signed stretch mirrors an axis, zoom is positive, rotation uses degrees, and pivot is normalized within the crop. Renderer size scales the clip canvas into world units.
+
+A template clip may store `directions` (`up`, `left`, `down`, `right` frame lists) instead of `frames`; BornEngineTools writes this when **4 directions** is enabled. Binding checks crops in every direction, and the bound clip plays the variant chosen by `animator.setDir(dir)`. When re-validating an already resolved template (for example before `JSON.stringify`), convert it with `spriteAnimationTemplateSource(resolved)` first, because resolved directional clips also expose `frames` for the down direction.
+
+In V1, every layer in a clip shares FPS, frame durations, loop mode, markers, state transitions, and crossfade. Independent layer timelines, bones, and skeletal animation are not included. Compact serialization omits only safe defaults and preserves IDs, tags, ordering, crops, markers, and transforms. Existing concrete `.spriteanim.json` documents and single-sprite playback remain compatible. See the [sprite animation template guide](https://ruanfernandes.github.io/BornEngine/docs/guides/sprite-animation-templates/) and [API reference](https://ruanfernandes.github.io/BornEngine/docs/api/sprites/).
 
 ### 2D physics, tilemaps, and maps
 
@@ -142,7 +155,7 @@ Attach the renderer and animator to the same `GameObject`. The scene handles upd
 
 `Tilemap` is a scene component with tile and collision data. `World2DDocument` v1 is versioned JSON independent of 3D `WorldData`. Use `validateWorld2D`, `serializeWorld2D`, `World2DComponentRegistry`, and `World2DLoader`; the loader takes `resolveSpriteFrame` and, when the document contains bodies, a ready `PhysicsWorld2D` instance. The CLI importer `bornengine import tiled <map.tmx> --output <world.world2d.json>` accepts orthogonal Tiled maps within the documented finite-map subset.
 
-There is no public `Navigation2D` class or weighted navigation mesh in this version. Use exported `AStarGrid2D` for uniform-cost grid pathfinding.
+There is no public `Navigation2D` class or weighted navigation mesh in this version. Use the exported `AStarGrid2D` API for uniform-cost grid pathfinding.
 
 ### Cameras and viewport
 
@@ -200,6 +213,14 @@ Persistent mode is the default on supported targets. On Web, each opened databas
 `ColyseusClient(game, endpoint)` manages connections associated with the `Game`. Use authoritative servers and send player intent rather than a final position the server trusts. The engine synchronizes room data, but does not automatically create a `GameObject` for each remote entity; keep a view layer and synchronize it with snapshots.
 
 `Game.run()` pumps the Colyseus service each frame. In native Perry games, the standalone loop blocks; use `joinOrCreateWithCallbacks()`/`requestWithCallbacks()` when promises need an event loop that is not being yielded to. An embedded host must keep calling `runFrame()`. To clean up explicitly, leave rooms and dispose of the client.
+
+## JSON blueprints
+
+BornEngineTools authors data-only `bornengine.blueprint-template` and `bornengine.blueprint` JSON documents. Both use schema `version: 1`; templates also use an independent positive `revision`, and each blueprint references the exact template ID and revision. Templates declare typed fields, events, action/condition definitions, execution pins, and game-chosen `operationId` values. Blueprints store field values, graph node instances, parameters, canvas positions, and connections. JSON contains no executable source, expression runtime, or generic engine executor.
+
+Shared templates are authored under `.bornengine/blueprint-templates/`. Client blueprints are stored under `assets/blueprints/`; server-target blueprints are stored under a valid linked server's `blueprints/`. The CLI creates that server with `bornengine create server` and writes a versioned `bornengine.server.json` marker. BornEngineTools offers the server only when `clientProjectRoot` resolves to the current BornEngine project. Invalid JSON, unknown schema versions, and missing or mismatched template revisions remain unchanged and produce diagnostics.
+
+For server execution, deploy the exact referenced template revision with its blueprint so game code can resolve `definitionId` values to declared operation IDs. Validate the full data against game rules and map each allowed `operationId` to an explicit handler in client/server code. Multiplayer outcomes remain server-authoritative; client blueprints may drive presentation only. BornEngineTools is optional at runtime and edits version-controlled project files; it does not write to live servers or publish remote changes. See the blueprints guide (`guides/blueprints`) for the Colyseus example and authoring details.
 
 ## Scripting sandbox
 
@@ -263,6 +284,7 @@ The root import `@bornengine/engine` is appropriate for game code. Public subpat
 | --- | --- |
 | `@bornengine/engine/core` | `Game`, `Window`, `Renderer`, platform types |
 | `@bornengine/engine/game` | `GameObject`, `GameComponent`, `Scene`, `GameScene`, adapters |
+| `@bornengine/engine/annotations` | `Asset` and `GameComponent` field decorators |
 | `@bornengine/engine/scene` | `SceneGraph`, `SceneNode` |
 | `@bornengine/engine/assets` | `AssetManager`, `SceneAssetManager`, `AssetGroup` |
 | `@bornengine/engine/textures` | `Texture`, `ImageData`, `RenderTexture` |
@@ -294,20 +316,20 @@ This map is a guide; confirm each name against the package's current exports.
 
 ## Examples and detailed documentation
 
-Use examples from the repository as recipes that should compile with the current code. General index: [`examples/README.md`](examples/README.md).
+Use the official examples as recipes that should compile with the current code.
 
-- Quick start: [`quickstart`](webpage/src/content/docs/getting-started/quickstart.md)
-- GameObjects and scenes: [`api/game`](webpage/src/content/docs/api/game.md)
-- Ownership and preload: [`api/assets`](webpage/src/content/docs/api/assets.md)
-- Complete 2D guide: [`guides/2d-game`](webpage/src/content/docs/guides/2d-game.md)
-- Sprites/animation/particles: [`api/sprites`](webpage/src/content/docs/api/sprites.md)
-- Retained GUI: [`api/gui`](webpage/src/content/docs/api/gui.md), [`guides/gui-controls`](webpage/src/content/docs/guides/gui-controls.md)
-- 2D physics: [`api/physics2d`](webpage/src/content/docs/api/physics2d.md)
-- World2D/Tiled: [`api/world2d`](webpage/src/content/docs/api/world2d.md), [`cli/import`](webpage/src/content/docs/cli/import.md)
-- 3D: [`api/models`](webpage/src/content/docs/api/models.md), [`api/physics`](webpage/src/content/docs/api/physics.md)
-- SQLite: [`api/storage`](webpage/src/content/docs/api/storage.md)
-- Colyseus: [`guides/multiplayer`](webpage/src/content/docs/guides/multiplayer.md)
-- Sandbox: [`api/scripting`](webpage/src/content/docs/api/scripting.md), [`examples/scripting-sandbox`](examples/scripting-sandbox/README.md)
-- Targets: [`platforms`](webpage/src/content/docs/platforms/index.md)
+- Quick start: `quickstart`
+- GameObjects and scenes: `api/game`
+- Ownership and preload: `api/assets`
+- Complete 2D guide: `guides/2d-game`
+- Sprites/animation/particles: `api/sprites`
+- Retained GUI: `api/gui`, `guides/gui-controls`
+- 2D physics: `api/physics2d`
+- World2D/Tiled: `api/world2d`, `cli/import`
+- 3D: `api/models`, `api/physics`
+- SQLite: `api/storage`
+- Colyseus: `guides/multiplayer`
+- Sandbox: `api/scripting`, `examples/scripting-sandbox`
+- Targets: `platforms`
 
-To verify the API in the actual checkout, start with `package.json`, `src/index.ts`, the specific implementation under `src/<module>/`, `webpage/src/content/docs/`, and an example under `examples/`. If documentation and runtime disagree, treat current code, exports, and compile checks as the source of truth and fix the documentation.
+To verify the API, start with the installed package's `exports` map and type declarations, then the matching section of the BornEngine documentation.
