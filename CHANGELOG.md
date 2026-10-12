@@ -2,6 +2,12 @@
 
 Notable changes to BornEngine CLI are documented here. CLI releases are versioned independently from the BornEngine engine.
 
+## 0.8.4
+
+### Changed
+
+- The AI guide documents the typed `SpriteAnimator<TClip>` and `GameOptions.textureFilter`, whose default is `nearest` in `2d` render mode.
+
 ## 0.8.3
 
 ### Added
