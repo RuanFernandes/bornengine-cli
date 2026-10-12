@@ -1922,8 +1922,7 @@ mod tests {
         fs::write(output.path().join("assets/anis/idle.json"), b"user edit").unwrap();
 
         let error = pack_project(project.path(), output.path())
-            .err()
-            .expect("different untracked file must be refused");
+            .expect_err("different untracked file must be refused");
 
         assert!(
             format!("{error:#}")
