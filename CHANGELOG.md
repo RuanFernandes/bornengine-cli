@@ -2,6 +2,12 @@
 
 Notable changes to BornEngine CLI are documented here. CLI releases are versioned independently from the BornEngine engine.
 
+## 0.8.2
+
+### Changed
+
+- The AI guide written to projects as `AGENTS.md` documents `SpriteAnimationComponent`, `loadSpriteAnimationTemplate`, `addRequiredComponent`, and typed `@GameComponent<T>(options)` options, matching the engine guide.
+
 ## 0.8.1
 
 ### Changed

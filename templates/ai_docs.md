@@ -64,7 +64,7 @@ else game.run();
 
 ## Scenes, objects, and components
 
-`Scene` is a gameplay-oriented scene and requires its owning `Game`. `GameObject` represents an entity, hierarchy, and transform; `GameComponent` provides attachable behavior. The main object/component hooks are `onAwake`, `onStart`, `update`, `fixedUpdate`, `render`, and `onDestroy`.
+`Scene` is a gameplay-oriented scene and requires its owning `Game`. `GameObject` represents an entity, hierarchy, and transform; `GameComponent` provides attachable behavior. The main object/component hooks are `onAwake`, `onStart`, `update`, `fixedUpdate`, `render`, and `onDestroy`. `GameObject.addComponent(c)` returns the component or `null`; `addRequiredComponent(c)` throws instead.
 
 ```ts
 import { Game, GameObject, Scene } from '@bornengine/engine';
@@ -87,7 +87,7 @@ class Level extends Scene {
 
 Visual components such as `SpriteRenderer`, `Tilemap`, and `ParticleEmitter2D` are drawn automatically by the scene. The scene collects enabled components on active objects, sorts them by `renderOrder`, and preserves insertion order for ties. When overriding `Game.render()`, clear the screen and call `super.render()` to keep this drawing behavior.
 
-Field annotations come from `@bornengine/engine/annotations` and run when the object is added to a `Scene`, before its `onAwake`. `@Asset(path, errCallback?)` assigns the scene-owned `Texture`; without `errCallback`, a failed load makes `scene.add()` throw the texture's `error`. `errCallback(error, path, retry)` replaces that default and its return value becomes the field value; `retry()` loads the asset again and returns the loaded `Texture`, or throws if it still fails. The callback may be `async`: `scene.add()` then returns the object at once, and it attaches and runs `onAwake` when the promise resolves. `scene.remove()` cancels a pending object. `addChild()` throws and the world loader returns `false` for async callbacks. Limitation: on native Linux builds, `Game.run()` does not drain JS promise jobs or timers, so async callbacks do not resolve during play yet; synchronous callbacks are unaffected. `@GameComponent()` assigns a new instance of the field's class type after `addComponent`; the class needs a no-argument constructor. An exception in `onAwake` leaves the object attached and the scene usable for later `add` calls.
+Field annotations come from `@bornengine/engine/annotations` and run when the object is added to a `Scene`, before its `onAwake`. `@Asset(path, errCallback?)` assigns the scene-owned `Texture`; without `errCallback`, a failed load makes `scene.add()` throw the texture's `error`. `errCallback(error, path, retry)` replaces that default and its return value becomes the field value; `retry()` loads the asset again and returns the loaded `Texture`, or throws if it still fails. The callback may be `async`: `scene.add()` then returns the object at once, and it attaches and runs `onAwake` when the promise resolves. `scene.remove()` cancels a pending object. `addChild()` throws and the world loader returns `false` for async callbacks. Limitation: on native Linux builds, `Game.run()` does not drain JS promise jobs or timers, so async callbacks do not resolve during play yet; synchronous callbacks are unaffected. `@GameComponent<T>(options?)` assigns a new instance of the field's class type after `addComponent`, passing `options` to its constructor. Pass the class as the type argument, for example `@GameComponent<CameraRig2D>({ smoothing: 0.1 })`, to check options and get autocomplete; without it the options are not checked. Components that need a runtime object, such as a physics world or a sound, cannot use the decorator; pass those with `addComponent`. An exception in `onAwake` leaves the object attached and the scene usable for later `add` calls.
 
 ## Resources and ownership
 
@@ -130,7 +130,8 @@ BornEngine's current development focus is 2D. Use `Vector2D` for 2D math and vec
 - `SpriteSheet(texture, options)` creates named or grid frames with margins/spacing, pivots, and trim data. The sheet does not own the texture.
 - `SpriteRenderer extends GameComponent` draws a frame with size, pivot, tint, flips, and visibility; the object's world position, scale, and Z rotation are applied during drawing.
 - `SpriteAnimation` contains keyframes, duration/FPS, markers, and a `loop`, `once`, or `ping-pong` mode.
-- `SpriteAnimator` controls per-object clips and states with bool/number/trigger parameters, AND conditions, transitions in declared order, and optional crossfades.
+- `SpriteAnimator` controls per-object clips and states with bool/number/trigger parameters, AND conditions, transitions in declared order, and optional crossfades. `autoplay` plays one clip without a state machine.
+- `SpriteAnimationComponent<TClip>` is the component form for template characters. It loads the template and images on wake, attaches the renderer and animator, and exposes `play`, `setDir`, `setBool`, `setNumber`, and `setTrigger`. The type argument lists the clip names, so `play` rejects unknown names at compile time.
 - Directional clips: pass `directions: { up, left, down, right }` instead of `frames` (each list needs at least one keyframe; counts may differ). `animator.setDir(dir)` selects the variant using Graal `dir` order: `0` up, `1` left, `2` down (default), `3` right; other values return `false`. Changing `dir` mid-playback keeps the frame index and elapsed time (clamped to shorter directions) without restarting or re-sending markers. Non-directional clips ignore `dir`. A directional clip's `frames`/`duration` describe its down variant, and `directions` holds the four variants in dir order.
 - `onMarker`, `onComplete`, and `onStateChanged` are hooks for gameplay and VFX. `seek()` does not fire markers by default. A `dt` that crosses multiple frames preserves marker order.
 - Calling `play()` again on the current clip does not restart it without `restart: true`; the default fade duration is zero.
@@ -139,9 +140,9 @@ Attach the renderer and animator to the same `GameObject`. The scene handles upd
 
 #### Reusable animation templates
 
-`.spriteanim-template.json` files use `bornengine.spriteanim-template` version 1 and store reusable clip timing plus ordered image layers. `SpriteAnimationTemplateAsset` validates a parsed JSON document; the engine does not add a general filesystem JSON loader. Bind loaded textures by the author-defined parameter IDs with `template.bind({ body_art: bodyTexture, held_item: swordTexture })`. IDs are arbitrary; labels and tags only organize the editor. Required inputs must be supplied, optional inputs may be omitted, and all supplied textures must belong to the same `Game` and contain every referenced crop.
+`.spriteanim-template.json` files use `bornengine.spriteanim-template` version 1 and store reusable clip timing plus ordered image layers. `SpriteAnimationTemplateAsset` validates a parsed JSON document. `loadSpriteAnimationTemplate(path, images)` reads a template file and binds textures you already have, and throws on a missing file or invalid binding. Bind loaded textures by the author-defined parameter IDs with `template.bind({ body_art: bodyTexture, held_item: swordTexture })`. IDs are arbitrary; labels and tags only organize the editor. Required inputs must be supplied, optional inputs may be omitted, and all supplied textures must belong to the same `Game` and contain every referenced crop.
 
-A successful binding returns per-binding `SpriteSheet`/`SpriteFrame` data and clips. Attach `new SpriteAnimationTemplateRenderer(binding, { size })` and `new SpriteAnimator(renderer, { clips: binding.clips })` to one `GameObject`, then call `animator.play('walk')`. A frame may draw multiple layers in bottom-to-top order. Crop values use source-image pixels; offsets are relative to the clip canvas center, signed stretch mirrors an axis, zoom is positive, rotation uses degrees, and pivot is normalized within the crop. Renderer size scales the clip canvas into world units.
+A successful binding returns per-binding `SpriteSheet`/`SpriteFrame` data and clips. For a character, prefer `SpriteAnimationComponent` on a `GameObject` field: `@GameComponent<SpriteAnimationComponent<'idle' | 'walk'>>({ template: path, images: { body_art: bodyPath }, filter?, autoplay: 'idle' })`. Manually, attach `new SpriteAnimationTemplateRenderer(binding)` and `new SpriteAnimator(renderer, { autoplay: 'idle' })` (clips default to all template clips) to one `GameObject`, then call `animator.play('walk')`. A frame may draw multiple layers in bottom-to-top order. Crop values use source-image pixels; offsets are relative to the clip canvas center, signed stretch mirrors an axis, zoom is positive, rotation uses degrees, and pivot is normalized within the crop. Renderer size scales the clip canvas into world units.
 
 A template clip may store `directions` (`up`, `left`, `down`, `right` frame lists) instead of `frames`; BornEngineTools writes this when **4 directions** is enabled. Binding checks crops in every direction, and the bound clip plays the variant chosen by `animator.setDir(dir)`. When re-validating an already resolved template (for example before `JSON.stringify`), convert it with `spriteAnimationTemplateSource(resolved)` first, because resolved directional clips also expose `frames` for the down direction.
 
@@ -159,7 +160,7 @@ There is no public `Navigation2D` class or weighted navigation mesh in this vers
 
 ### Cameras and viewport
 
-`CameraRig2D` is a component for follow, dead zones, bounds, zoom, and shake. With no `target`, it follows the object it is attached to, and `offset` defaults to the middle of the scene's `viewport2D`. Attach it with `@GameComponent()` on a `GameObject` field, with options as the decorator argument, or with `addComponent(new CameraRig2D(options))`. `Viewport2D` defines a logical resolution and `fit`, `integer`, or `stretch` mode; `ParallaxLayer2D` applies parallax offsets. A `Camera2D` can also be configured directly on `scene.camera2D`.
+`CameraRig2D` is a component for follow, dead zones, bounds, zoom, and shake. With no `target`, it follows the object it is attached to, and `offset` defaults to the middle of the scene's `viewport2D`. Attach it with `@GameComponent<CameraRig2D>(options)` on a `GameObject` field, or with `addComponent(new CameraRig2D(options))`. `Viewport2D` defines a logical resolution and `fit`, `integer`, or `stretch` mode; `ParallaxLayer2D` applies parallax offsets. A `Camera2D` can also be configured directly on `scene.camera2D`.
 
 ## 3D and 2.5D API
 
@@ -288,7 +289,7 @@ The root import `@bornengine/engine` is appropriate for game code. Public subpat
 | `@bornengine/engine/scene` | `SceneGraph`, `SceneNode` |
 | `@bornengine/engine/assets` | `AssetManager`, `SceneAssetManager`, `AssetGroup` |
 | `@bornengine/engine/textures` | `Texture`, `ImageData`, `RenderTexture` |
-| `@bornengine/engine/sprites` | `SpriteSheet`, `SpriteRenderer`, `SpriteAnimation`, `SpriteAnimator`, `ParticleEmitter2D` |
+| `@bornengine/engine/sprites` | `SpriteSheet`, `SpriteRenderer`, `SpriteAnimation`, `SpriteAnimator`, `SpriteAnimationComponent`, `ParticleEmitter2D` |
 | `@bornengine/engine/math` | `Vector2D`, `Vec3`, `Vec4`, `Quat`, `Matrix4`, `Mathf`, `Collision` |
 | `@bornengine/engine/pathfinding2d` | `AStarGrid2D` |
 | `@bornengine/engine/procedural` | `SeededRandom`, `Noise2D` |
