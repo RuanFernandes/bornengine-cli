@@ -14,7 +14,8 @@ const AUDIT_MANIFEST_NAME: &str = "bornengine.assets.json";
 const AUDIT_REPORT_FORMAT: &str = "bornengine.asset_validation";
 const MANIFEST_FORMAT: &str = "bornengine-assets-v1";
 const WORLD_FORMAT: &str = "bornengine.world2d";
-const WORLD_VERSION: u64 = 1;
+const WORLD_VERSION_LEGACY: u64 = 1;
+const WORLD_VERSION_COMPACT: u64 = 2;
 const ASSET_ROOTS: [&str; 3] = ["assets", "public", "static"];
 const SKIPPED_DIRECTORIES: [&str; 7] = [
     ".git",
@@ -878,9 +879,11 @@ where
     } else {
         None
     };
-    let old_paths = manifest_paths(old_manifest.as_ref())?;
+    let mut old_paths = manifest_paths(old_manifest.as_ref())?;
     let new_paths = assets.keys().cloned().collect::<BTreeSet<_>>();
-    preflight_pack_output(&output, &old_paths, &new_paths)?;
+    let adopted = preflight_pack_output(&output, &old_paths, &new_paths, &assets)?;
+    // Adopted files join the backup set so a failed publish restores them.
+    old_paths.extend(adopted);
 
     let stage = PackStage::create(&output_parent)?;
     let staged_files = stage.0.join("next");
@@ -1012,7 +1015,9 @@ fn preflight_pack_output(
     output: &Path,
     old_paths: &BTreeSet<String>,
     new_paths: &BTreeSet<String>,
-) -> Result<()> {
+    assets: &BTreeMap<String, PathBuf>,
+) -> Result<BTreeSet<String>> {
+    let mut adopted = BTreeSet::new();
     for relative in old_paths.union(new_paths) {
         let path = output.join(relative);
         reject_output_parent_symlinks(output, &path)?;
@@ -1024,7 +1029,10 @@ fn preflight_pack_output(
                 bail!("packed asset path `{relative}` is not a regular file");
             }
             Ok(_) if new_paths.contains(relative) && !old_paths.contains(relative) => {
-                bail!("refusing to replace untracked output file `{relative}`");
+                if !same_file_contents(&path, &assets[relative])? {
+                    bail!("refusing to replace untracked output file `{relative}`");
+                }
+                adopted.insert(relative.clone());
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -1034,7 +1042,18 @@ fn preflight_pack_output(
             }
         }
     }
-    Ok(())
+    Ok(adopted)
+}
+
+fn same_file_contents(existing: &Path, source: &Path) -> Result<bool> {
+    if fs::metadata(existing)?.len() != fs::metadata(source)?.len() {
+        return Ok(false);
+    }
+    let existing_bytes =
+        fs::read(existing).with_context(|| format!("could not read {}", existing.display()))?;
+    let source_bytes =
+        fs::read(source).with_context(|| format!("could not read {}", source.display()))?;
+    Ok(existing_bytes == source_bytes)
 }
 
 fn publish_staged_pack<F>(
@@ -1279,8 +1298,10 @@ fn collect_project_assets(root: &Path) -> Result<BTreeMap<String, PathBuf>> {
 }
 
 fn collect_project_assets_with_references(
-    root: &Path,
+    project_root: &Path,
 ) -> Result<(BTreeMap<String, PathBuf>, BTreeSet<String>)> {
+    let root = canonical_root(project_root)?;
+    let root = root.as_path();
     let mut files = BTreeMap::new();
     let mut spelling_by_normalized = BTreeMap::new();
     let mut referenced = BTreeSet::new();
@@ -1431,17 +1452,20 @@ fn collect_world_document(
         return Ok(());
     }
     let version = world.get("version").and_then(Value::as_u64);
-    if version != Some(WORLD_VERSION) {
-        bail!(
+    let listed_assets: Vec<&Value> = match version {
+        Some(WORLD_VERSION_LEGACY) => world
+            .get("assets")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("{}: `assets` must be an array", path.display()))?
+            .iter()
+            .collect(),
+        Some(WORLD_VERSION_COMPACT) => compact_world_assets(&world, path)?,
+        _ => bail!(
             "{}: unsupported world format version {:?}",
             path.display(),
             version
-        );
-    }
-    let listed_assets = world
-        .get("assets")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("{}: `assets` must be an array", path.display()))?;
+        ),
+    };
     let mut seen = BTreeSet::new();
     for value in listed_assets {
         let raw = value
@@ -1459,6 +1483,65 @@ fn collect_world_document(
         referenced.insert(relative);
     }
     Ok(())
+}
+
+fn compact_world_assets<'a>(world: &'a Value, world_file: &Path) -> Result<Vec<&'a Value>> {
+    fn push_unique<'a>(references: &mut Vec<&'a Value>, value: &'a Value) {
+        if !references.contains(&value) {
+            references.push(value);
+        }
+    }
+
+    fn push_file_properties<'a>(references: &mut Vec<&'a Value>, properties: Option<&'a Value>) {
+        let Some(properties) = properties.and_then(Value::as_object) else {
+            return;
+        };
+        for property in properties.values() {
+            if property.get("type").and_then(Value::as_str) == Some("file")
+                && let Some(value) = property.get("value").filter(|value| value.is_string())
+            {
+                push_unique(references, value);
+            }
+        }
+    }
+
+    let mut references: Vec<&Value> = Vec::new();
+    let tilesets = world.get("tilesets").and_then(Value::as_array);
+    for tileset in tilesets.into_iter().flatten() {
+        if let Some(image) = tileset.get("image").filter(|image| image.is_string()) {
+            push_unique(&mut references, image);
+        }
+        let tiles = tileset.get("tiles").and_then(Value::as_array);
+        for tile in tiles.into_iter().flatten() {
+            push_file_properties(&mut references, tile.get("properties"));
+        }
+    }
+    let layers = world.get("layers").and_then(Value::as_array);
+    for layer in layers.into_iter().flatten() {
+        push_file_properties(&mut references, layer.get("properties"));
+        if layer.get("type").and_then(Value::as_str) == Some("objects") {
+            let objects = layer.get("objects").and_then(Value::as_array);
+            for object in objects.into_iter().flatten() {
+                push_file_properties(&mut references, object.get("properties"));
+            }
+        }
+    }
+
+    let inferred = references.clone();
+    if let Some(extra) = world.get("assets") {
+        let extra = extra.as_array().ok_or_else(|| {
+            anyhow!(
+                "{}: `assets` must be an array when present",
+                world_file.display()
+            )
+        })?;
+        references.extend(
+            extra
+                .iter()
+                .filter(|value| !(value.is_string() && inferred.contains(value))),
+        );
+    }
+    Ok(references)
 }
 
 fn add_asset(
@@ -1765,7 +1848,10 @@ fn create_safe_parent_directories(
 
 #[cfg(test)]
 mod tests {
-    use super::{jpeg_dimensions, media_signature, pack_project, pack_project_with_rename};
+    use super::{
+        collect_project_assets_with_references, jpeg_dimensions, media_signature, pack_project,
+        pack_project_with_rename,
+    };
     use std::fs;
 
     #[test]
@@ -1807,6 +1893,47 @@ mod tests {
         );
         let result = jpeg_dimensions(&mut std::io::Cursor::new(&bytes), bytes.len() as u64);
         assert_eq!(result, Ok(None));
+    }
+
+    #[test]
+    fn identical_untracked_output_file_is_adopted() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join("assets/anis")).unwrap();
+        fs::write(project.path().join("assets/anis/idle.json"), b"template").unwrap();
+        let output = tempfile::tempdir().unwrap();
+        fs::create_dir_all(output.path().join("assets/anis")).unwrap();
+        fs::write(output.path().join("assets/anis/idle.json"), b"template").unwrap();
+
+        pack_project(project.path(), output.path()).unwrap();
+
+        assert_eq!(
+            fs::read(output.path().join("assets/anis/idle.json")).unwrap(),
+            b"template"
+        );
+        let manifest = fs::read_to_string(output.path().join("assets.manifest.json")).unwrap();
+        assert!(manifest.contains("assets/anis/idle.json"));
+    }
+
+    #[test]
+    fn different_untracked_output_file_is_still_refused() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir_all(project.path().join("assets/anis")).unwrap();
+        fs::write(project.path().join("assets/anis/idle.json"), b"template").unwrap();
+        let output = tempfile::tempdir().unwrap();
+        fs::create_dir_all(output.path().join("assets/anis")).unwrap();
+        fs::write(output.path().join("assets/anis/idle.json"), b"user edit").unwrap();
+
+        let error = pack_project(project.path(), output.path())
+            .expect_err("different untracked file must be refused");
+
+        assert!(
+            format!("{error:#}")
+                .contains("refusing to replace untracked output file `assets/anis/idle.json`")
+        );
+        assert_eq!(
+            fs::read(output.path().join("assets/anis/idle.json")).unwrap(),
+            b"user edit"
+        );
     }
 
     #[test]
@@ -1854,5 +1981,158 @@ mod tests {
             fs::read(output.path().join("notes.txt")).unwrap(),
             b"unrelated user file"
         );
+    }
+
+    const COMPACT_WORLD: &str = r#"{
+  "format": "bornengine.world2d",
+  "version": 2,
+  "id": "compact-mixed",
+  "size": [4, 2],
+  "tileSize": [16, 16],
+  "assets": ["data/custom.bin", "assets/main.png"],
+  "tilesets": [
+    { "id": "main", "image": "assets/main.png", "columns": 4, "tileCount": 16 },
+    { "id": "extra", "image": "assets/extra.png", "columns": 2, "tileCount": 4 }
+  ],
+  "layers": [
+    { "id": "dense", "type": "tilemap", "data": [1, 0, 17, 0, 2, 0, -137, 0] },
+    {
+      "id": "actors",
+      "type": "objects",
+      "objects": [
+        {
+          "id": "npc-1",
+          "type": "npc",
+          "position": [32, 48],
+          "size": [24, 48],
+          "properties": {
+            "voice": { "type": "file", "value": "audio/guard.ogg" },
+            "health": { "type": "int", "value": 12 }
+          }
+        }
+      ]
+    }
+  ]
+}"#;
+
+    fn compact_project(files: &[&str]) -> tempfile::TempDir {
+        let project = tempfile::tempdir().unwrap();
+        for file in files {
+            let path = project.path().join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, [1]).unwrap();
+        }
+        fs::create_dir_all(project.path().join("worlds")).unwrap();
+        fs::write(
+            project.path().join("worlds/level.world2d.json"),
+            COMPACT_WORLD,
+        )
+        .unwrap();
+        project
+    }
+
+    #[test]
+    fn compact_world_references_are_collected() {
+        let project = compact_project(&[
+            "assets/main.png",
+            "assets/extra.png",
+            "data/custom.bin",
+            "audio/guard.ogg",
+        ]);
+
+        let (files, referenced) = collect_project_assets_with_references(project.path()).unwrap();
+
+        let expected = [
+            "assets/extra.png",
+            "assets/main.png",
+            "audio/guard.ogg",
+            "data/custom.bin",
+        ];
+        assert_eq!(
+            referenced.iter().map(String::as_str).collect::<Vec<_>>(),
+            expected
+        );
+        for path in expected {
+            assert!(files.contains_key(path), "{path}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_root_reached_through_symlink_is_accepted() {
+        let project = compact_project(&[
+            "assets/main.png",
+            "assets/extra.png",
+            "data/custom.bin",
+            "audio/guard.ogg",
+        ]);
+        let links = tempfile::tempdir().unwrap();
+        let link = links.path().join("linked-root");
+        std::os::unix::fs::symlink(project.path(), &link).unwrap();
+
+        let (files, referenced) = collect_project_assets_with_references(&link).unwrap();
+
+        assert!(files.contains_key("assets/main.png"));
+        assert!(referenced.contains("audio/guard.ogg"));
+    }
+
+    #[test]
+    fn compact_world_missing_tileset_image_is_reported() {
+        let project = compact_project(&["assets/main.png", "data/custom.bin", "audio/guard.ogg"]);
+
+        let error = collect_project_assets_with_references(project.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("level.world2d.json"), "{error}");
+        assert!(error.contains("assets/extra.png"), "{error}");
+        assert!(error.contains("does not exist"), "{error}");
+    }
+
+    #[test]
+    fn compact_world_missing_file_property_is_reported() {
+        let project = compact_project(&["assets/main.png", "assets/extra.png", "data/custom.bin"]);
+
+        let error = collect_project_assets_with_references(project.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("audio/guard.ogg"), "{error}");
+        assert!(error.contains("does not exist"), "{error}");
+    }
+
+    #[test]
+    fn unknown_world_versions_are_still_rejected() {
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join("level.world2d.json"),
+            r#"{"format":"bornengine.world2d","version":3,"assets":[]}"#,
+        )
+        .unwrap();
+
+        let error = collect_project_assets_with_references(project.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            error.contains("unsupported world format version Some(3)"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn legacy_world_still_requires_listed_assets() {
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            project.path().join("level.world2d.json"),
+            r#"{"format":"bornengine.world2d","version":1,"tilesets":[{"id":"a","image":"assets/a.png"}]}"#,
+        )
+        .unwrap();
+
+        let error = collect_project_assets_with_references(project.path())
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("`assets` must be an array"), "{error}");
     }
 }
