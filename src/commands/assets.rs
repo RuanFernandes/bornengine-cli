@@ -1298,8 +1298,10 @@ fn collect_project_assets(root: &Path) -> Result<BTreeMap<String, PathBuf>> {
 }
 
 fn collect_project_assets_with_references(
-    root: &Path,
+    project_root: &Path,
 ) -> Result<(BTreeMap<String, PathBuf>, BTreeSet<String>)> {
+    let root = canonical_root(project_root)?;
+    let root = root.as_path();
     let mut files = BTreeMap::new();
     let mut spelling_by_normalized = BTreeMap::new();
     let mut referenced = BTreeSet::new();
@@ -2053,6 +2055,25 @@ mod tests {
         for path in expected {
             assert!(files.contains_key(path), "{path}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_root_reached_through_symlink_is_accepted() {
+        let project = compact_project(&[
+            "assets/main.png",
+            "assets/extra.png",
+            "data/custom.bin",
+            "audio/guard.ogg",
+        ]);
+        let links = tempfile::tempdir().unwrap();
+        let link = links.path().join("linked-root");
+        std::os::unix::fs::symlink(project.path(), &link).unwrap();
+
+        let (files, referenced) = collect_project_assets_with_references(&link).unwrap();
+
+        assert!(files.contains_key("assets/main.png"));
+        assert!(referenced.contains("audio/guard.ogg"));
     }
 
     #[test]
