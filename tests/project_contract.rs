@@ -23,6 +23,16 @@ fn creates_small_game_project_with_pinned_engine_and_perry_allowlist() {
     assert!(project.join("main.ts").is_file());
     assert!(project.join(".gitignore").is_file());
     assert!(project.join("README.md").is_file());
+    let tsconfig: Value =
+        serde_json::from_str(&fs::read_to_string(project.join("tsconfig.json")).unwrap()).unwrap();
+    assert_eq!(
+        tsconfig["compilerOptions"]["experimentalDecorators"],
+        Value::Bool(true)
+    );
+    assert_eq!(
+        tsconfig["compilerOptions"]["emitDecoratorMetadata"],
+        Value::Bool(true)
+    );
     let ai_guide = fs::read_to_string(project.join("AGENTS.md")).unwrap();
     assert!(ai_guide.starts_with("# BornEngine — AI context reference for language models"));
     assert!(ai_guide.contains("Do not pass `Game` to assets."));
