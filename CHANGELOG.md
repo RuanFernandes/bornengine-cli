@@ -2,6 +2,12 @@
 
 Notable changes to BornEngine CLI are documented here. CLI releases are versioned independently from the BornEngine engine.
 
+## 0.8.3
+
+### Added
+
+- New projects include `tsconfig.json` with `experimentalDecorators` and `emitDecoratorMetadata`, so `@Asset` and `@GameComponent` compile without editor errors.
+
 ## 0.8.2
 
 ### Changed

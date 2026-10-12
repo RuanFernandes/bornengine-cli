@@ -230,6 +230,7 @@ new StarterGame().run();
     let mut files = vec![
         ("package.json", package_json),
         ("perry.toml", perry_toml),
+        ("tsconfig.json", TSCONFIG.to_owned()),
         ("main.ts", main_ts),
         (".gitignore", gitignore.to_owned()),
         ("README.md", readme),
@@ -239,6 +240,20 @@ new StarterGame().run();
     }
     Ok(files)
 }
+
+const TSCONFIG: &str = r#"{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "skipLibCheck": true
+  },
+  "include": ["main.ts", "src/**/*.ts"]
+}
+"#;
 
 fn generated_perry_toml(package_name: &str, spec: &ProjectSpec) -> String {
     let mut config = format!("[project]\nname = \"{package_name}\"\nentry = \"main.ts\"\n");
