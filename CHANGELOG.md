@@ -2,6 +2,12 @@
 
 Notable changes to BornEngine CLI are documented here. CLI releases are versioned independently from the BornEngine engine.
 
+## 0.8.1
+
+### Changed
+
+- The AI guide written to projects as `AGENTS.md` now matches the engine guide: field annotations with async `errCallback` and `retry`, the `@bornengine/engine/annotations` import entry, JSON blueprints, and animation templates. Hardcoded engine versions and repo-only paths were removed.
+
 ## 0.8.0
 
 ### Added
