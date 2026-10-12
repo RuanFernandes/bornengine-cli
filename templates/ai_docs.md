@@ -146,7 +146,7 @@ There is no public `Navigation2D` class or weighted navigation mesh in this vers
 
 ### Cameras and viewport
 
-`CameraRig2D` is a component for follow, dead zones, bounds, zoom, and shake. `Viewport2D` defines a logical resolution and `fit`, `integer`, or `stretch` mode; `ParallaxLayer2D` applies parallax offsets. A `Camera2D` can also be configured directly on `scene.camera2D`.
+`CameraRig2D` is a component for follow, dead zones, bounds, zoom, and shake. With no `target`, it follows the object it is attached to, and `offset` defaults to the middle of the scene's `viewport2D`. Attach it with `@GameComponent()` on a `GameObject` field, with options as the decorator argument, or with `addComponent(new CameraRig2D(options))`. `Viewport2D` defines a logical resolution and `fit`, `integer`, or `stretch` mode; `ParallaxLayer2D` applies parallax offsets. A `Camera2D` can also be configured directly on `scene.camera2D`.
 
 ## 3D and 2.5D API
 
