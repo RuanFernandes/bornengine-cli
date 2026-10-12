@@ -10,7 +10,11 @@ on:
     inputs:
       tag:
         description: Existing GitHub release tag to publish
-        required: true
+        required: false
+        type: string
+      ref:
+        description: Branch or commit to publish without a release check (publishes npm/package.json as it is)
+        required: false
         type: string
 
 permissions:
@@ -29,8 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag || github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.release.tag_name || github.event.inputs.tag || github.event.inputs.ref || github.event.workflow_run.head_branch }}
       - name: Verify release exists
+        if: github.event.inputs.ref == ''
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
