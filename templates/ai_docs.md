@@ -6,7 +6,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 
 1. **Use the current class-first API.** Do not generate the old BloomEngine API with global `initWindow`, `runGame`, `beginDrawing`, `loadTexture()`, or numeric handles. There are no compatibility aliases for it.
 2. **Do not pass `Game` to assets.** Create `Texture`, `Model`, `Font`, `Sound`, `Music`, and related resources through `game.assets` or `scene.assets`. For example: `this.assets.loadTexture('assets/player.png')`. `Texture` has no public constructor.
-3. **Pass `Game` only to systems that need its context.** These include `new Scene(game)`, `new PhysicsWorld(game, options)`, `new PhysicsWorld2D(game, options)`, and `new ColyseusClient(game, endpoint)`.
+3. **Pass `Game` only to systems that need its context.** Scenes find the active Game themselves with `new Scene({ name })`; `Game.current` returns it anywhere else. These include `new PhysicsWorld(game, options)`, `new PhysicsWorld2D(game, options)`, and `new ColyseusClient(game, endpoint)`.
 4. **Scene updates are explicit.** `Game.run()` advances the application loop and engine services, but does not call `game.scenes.update(dt)` or schedule `updateFixed()`. The subclass decides when to advance scenes and physics systems.
 5. **Automatic scene rendering depends on the base method.** `Game.render()` draws the current scene. If a subclass overrides `render()`, call `super.render()` where scene components should be drawn.
 6. **Distinguish runtime settings from build settings.** `GameOptions.renderMode` selects the runtime rendering path. The `[bornengine].native_profile` profile in `perry.toml` selects Rust features used by the BornEngine CLI in native builds.
@@ -64,13 +64,13 @@ else game.run();
 
 ## Scenes, objects, and components
 
-`Scene` is a gameplay-oriented scene and requires its owning `Game`. `GameObject` represents an entity, hierarchy, and transform; `GameComponent` provides attachable behavior. The main object/component hooks are `onAwake`, `onStart`, `update`, `fixedUpdate`, `render`, and `onDestroy`. `GameObject.addComponent(c)` returns the component or `null`; `addRequiredComponent(c)` throws instead.
+`Scene` is a gameplay-oriented scene. It binds to the active `Game` (`Game.current`) on construction, so `new Scene(options)` takes no `Game` argument. Create scenes only while a Game is active. `GameObject` represents an entity, hierarchy, and transform; `GameComponent` provides attachable behavior. The main object/component hooks are `onAwake`, `onStart`, `update`, `fixedUpdate`, `render`, and `onDestroy`. `GameObject.addComponent(c)` returns the component or `null`; `addRequiredComponent(c)` throws instead.
 
 ```ts
-import { Game, GameObject, Scene } from '@bornengine/engine';
+import { GameObject, Scene } from '@bornengine/engine';
 
 class Level extends Scene {
-  constructor(game: Game) {
+  constructor() {
     super(game, { name: 'Level' });
     const player = new GameObject({ name: 'Player', position: { x: 100, y: 100, z: 0 } });
     this.add(player);
@@ -78,7 +78,7 @@ class Level extends Scene {
 }
 
 // Inside a Game subclass:
-// this.scenes.changeTo(new Level(this));
+// this.scenes.changeTo(new Level());
 ```
 
 `game.scenes.changeTo(scene)` activates a scene. Replacing or unloading the previous scene runs its exit/disposal lifecycle and releases `scene.assets`, `scene.vfx`, and resources registered with `scene.own(resource)`. An object must belong to exactly one scene; a component is attached to exactly one object.
