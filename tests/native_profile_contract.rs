@@ -40,12 +40,12 @@ fn user_features_are_added_to_the_selected_profile_without_replacing_it() {
 }
 
 #[test]
-fn sqlite_and_scripting_are_added_to_all_supported_profiles() {
+fn sqlite_and_debug_ui_are_added_to_all_supported_profiles() {
     for (profile, expected) in [
-        ("2d", ["mp3", "sqlite", "scripting"].as_slice()),
+        ("2d", ["mp3", "sqlite", "debug-ui"].as_slice()),
         (
             "2.5d",
-            ["mp3", "models3d", "image-extras", "sqlite", "scripting"].as_slice(),
+            ["mp3", "models3d", "image-extras", "sqlite", "debug-ui"].as_slice(),
         ),
         (
             "3d",
@@ -55,7 +55,7 @@ fn sqlite_and_scripting_are_added_to_all_supported_profiles() {
                 "models3d",
                 "image-extras",
                 "sqlite",
-                "scripting",
+                "debug-ui",
             ]
             .as_slice(),
         ),
@@ -64,7 +64,7 @@ fn sqlite_and_scripting_are_added_to_all_supported_profiles() {
         fs::write(
             project.path().join("perry.toml"),
             format!(
-                "[bornengine]\nnative_profile = \"{profile}\"\nnative_features = [\"sqlite\", \"scripting\"]\n"
+                "[bornengine]\nnative_profile = \"{profile}\"\nnative_features = [\"sqlite\", \"debug-ui\"]\n"
             ),
         )
         .unwrap();

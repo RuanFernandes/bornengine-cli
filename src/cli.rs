@@ -15,9 +15,9 @@ fn parse_positive_jobs(value: &str) -> Result<usize, String> {
 
 fn parse_native_feature(value: &str) -> Result<String, String> {
     match value {
-        "sqlite" | "scripting" => Ok(value.to_owned()),
+        "sqlite" => Ok(value.to_owned()),
         _ => Err(format!(
-            "unsupported BornEngine native feature `{value}`; supported features: sqlite, scripting"
+            "unsupported BornEngine native feature `{value}`; supported features: sqlite"
         )),
     }
 }
@@ -82,7 +82,7 @@ pub enum Commands {
             long,
             value_delimiter = ',',
             value_parser = parse_native_feature,
-            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+            help = "Optional native features to include (comma-separated: sqlite)"
         )]
         native_features: Vec<String>,
     },
@@ -115,7 +115,7 @@ pub enum Commands {
             long,
             value_delimiter = ',',
             value_parser = parse_native_feature,
-            help = "Optional native features to include (comma-separated: sqlite,scripting)"
+            help = "Optional native features to include (comma-separated: sqlite)"
         )]
         native_features: Vec<String>,
     },

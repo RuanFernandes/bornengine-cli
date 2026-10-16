@@ -12,7 +12,7 @@ This file summarizes BornEngine's public API and architectural decisions for ass
 6. **Distinguish runtime settings from build settings.** `GameOptions.renderMode` selects the runtime rendering path. The `[bornengine].native_profile` profile in `perry.toml` selects Rust features used by the BornEngine CLI in native builds.
 7. **Check failures explicitly.** The engine uses values such as `isReady`, `isLoaded`, `error`, `null`, and results with `ok/status`. Read the API types and handle these results; do not assume every factory throws exceptions.
 8. **Do not promise features just because an old spec mentions them.** Before using a feature, confirm its name in the installed package's `exports` map and type declarations. Historical proposals do not prove that a feature exists.
-9. **Do not invent Perry or platform capabilities.** Use `bornengine check main.ts` or the appropriate target checks before recommending syntax, dependencies, or APIs. Web, Apple, and scripting compatibility differences are described in this file and the platform pages.
+9. **Do not invent Perry or platform capabilities.** Use `bornengine check main.ts` or the appropriate target checks before recommending syntax, dependencies, or APIs. Web and Apple compatibility differences are described in this file and the platform pages.
 
 ## Architecture in one sentence
 
@@ -60,7 +60,7 @@ if (!game.isReady) console.error(game.error);
 else game.run();
 ```
 
-`Game` provides `window`, `renderer`, `input`, `audio`, `scenes`, `sceneGraph`, `mobile`, `ui`, `gui`, `debugUi`, `assets`, and `scripting`. `run()` manages standalone frames and shutdown; `stop()` requests an orderly shutdown; `dispose()` releases the runtime outside the normal loop. A host that already owns the window and scheduler uses `runFrame(deltaTime, callbacks)`. Only one native runtime may be active per process.
+`Game` provides `window`, `renderer`, `input`, `audio`, `scenes`, `sceneGraph`, `mobile`, `ui`, `gui`, `debugUi`, and `assets`. `run()` manages standalone frames and shutdown; `stop()` requests an orderly shutdown; `dispose()` releases the runtime outside the normal loop. A host that already owns the window and scheduler uses `runFrame(deltaTime, callbacks)`. Only one native runtime may be active per process.
 
 ## Scenes, objects, and components
 
@@ -223,14 +223,6 @@ Shared templates are authored under `.bornengine/blueprint-templates/`. Client b
 
 For server execution, deploy the exact referenced template revision with its blueprint so game code can resolve `definitionId` values to declared operation IDs. Validate the full data against game rules and map each allowed `operationId` to an explicit handler in client/server code. Multiplayer outcomes remain server-authoritative; client blueprints may drive presentation only. BornEngineTools is optional at runtime and edits version-controlled project files; it does not write to live servers or publish remote changes. See the blueprints guide (`guides/blueprints`) for the Colyseus example and authoring details.
 
-## Scripting sandbox
-
-`game.scripting` creates a `ScriptRuntime`; `ScriptComponent` receives a self-contained JS source string and is attached to a `GameObject`. Each component uses an isolated QuickJS runtime/heap. Permissions are denied by default and granted explicitly: `log`, `self.read`, `self.transform.write`, and `self.particles.emit`.
-
-The guest module is a self-contained JS string with `export default { onStart(ctx), update(ctx, deltaTime), onDestroy(ctx) }`; all hooks are optional and synchronous. `ctx.log` requires `log`; `ctx.self.id/position` requires `self.read`; `ctx.self.setPosition/moveBy` requires `self.transform.write`; `ctx.particles.emitBurst(count, directionX?, directionY?)` requires `self.particles.emit` and a `ParticleEmitter2D` attached to the same object. Commands are applied after a synchronous hook finishes; an error or a returned Promise fails the hook and discards commands queued by that hook. Guest scripts do not receive `Game`, renderer, native handles, modules, filesystem, network, workers, Node APIs, or QuickJS `std`/`os`. Errors are exposed through `status/error`. The source limit is 1 MiB; default per-component limits are 16 MiB heap, 256 KiB stack, and 10,000 interrupt checks per hook. Accepted ranges are 64 KiB–64 MiB heap, 16–256 KiB stack, and 1–1,000,000 checks. The runtime does not load script files or manifests automatically. The host must load or embed the source; the CLI currently has no `bornengine script check` or `bornengine script pack` command.
-
-Validated v1 targets: native Linux and Web/WASM. Other native targets and watchOS must be checked with `game.scripting.isSupported`; do not claim support for them. This isolation is a containment layer for game content, not a formal security boundary against VM vulnerabilities or modified multiplayer clients.
-
 ## Native profiles and CLI
 
 `bornengine create` is interactive and asks for a name, game type, package manager, and stable engine version. `new` is the named/flagged variant; `init` initializes the current directory.
@@ -265,7 +257,6 @@ Do not confuse engine commands with CLI updates:
 - `bornengine update` only checks for a CLI release and prints install instructions; it does not update the executable.
 - `bornengine perry install [--release <tag>]` downloads the Perry compiler for this host from a BornEngine release and verifies its SHA-256. `bornengine perry path`, `perry list`, and `perry clean [--dry-run]` show or remove managed Perry compilers.
 - `BORNENGINE_PATH` and `--engine-path` are inputs to `new`/`init`; `engine use <path>` takes its path positionally.
-- The CLI has no `bornengine script check` or `bornengine script pack` command.
 
 ## Targets and important differences
 
@@ -310,7 +301,6 @@ The root import `@bornengine/engine` is appropriate for game code. Public subpat
 | `@bornengine/engine/gui` | Retained GUI controls, profiles, and events |
 | `@bornengine/engine/debug-ui` | Dear ImGui inspector |
 | `@bornengine/engine/storage` | Typed SQLite `GameDatabase` |
-| `@bornengine/engine/scripting` | `ScriptRuntime`, `ScriptComponent` |
 | `@bornengine/engine/colyseus` | `ColyseusClient`, `Room` |
 
 This map is a guide; confirm each name against the package's current exports.
@@ -330,7 +320,6 @@ Use the official examples as recipes that should compile with the current code.
 - 3D: `api/models`, `api/physics`
 - SQLite: `api/storage`
 - Colyseus: `guides/multiplayer`
-- Sandbox: `api/scripting`, `examples/scripting-sandbox`
 - Targets: `platforms`
 
 To verify the API, start with the installed package's `exports` map and type declarations, then the matching section of the BornEngine documentation.

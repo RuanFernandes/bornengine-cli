@@ -79,7 +79,7 @@ bornengine new MyGame --game-type 2d --package-manager npm --engine-version 0.15
 bornengine create server
 bornengine create server backend --package-manager npm
 bornengine --add-ai-docs game-context
-bornengine new MyScriptedGame --native-features sqlite,scripting
+bornengine new MyGame --native-features sqlite
 bornengine new MyAdventure --game-type 2.5d
 bornengine new MyWorld --game-type 3d
 bornengine init --game-type 3d
@@ -100,7 +100,7 @@ bornengine config set package-manager pnpm
 
 `multiplayer` (the Colyseus SDK) and `dialogs` (native file pickers) are detected from your TypeScript: `multiplayer` when the project imports `@bornengine/engine/colyseus` or `ColyseusClient`/`Room` from `@bornengine/engine`, and `dialogs` when it calls `openFileDialog` or `saveFileDialog`. Detected features are added after the profile features and before `native_features`; `bornengine build -v` prints the source line that enabled each one. Set `auto_native_features = false` in `[bornengine]` to disable detection, or list a feature in `native_features` to force it. Detected features are skipped, with a warning, when the installed engine does not declare them.
 
-SQLite and embedded scripting are opt-in native features. Pass `--native-features sqlite,scripting` to `new` or `init`, or add those names to `[bornengine].native_features` in an existing project's `perry.toml`. The default project does not compile the optional native SQLite or QuickJS dependencies. `sqlite` enables native database support; `scripting` enables QuickJS where that runtime is supported. Web/WASM keeps its existing behavior and uses its prebuilt engine package. Other custom engine Cargo features, such as `debug-ui`, can be set directly in `native_features`. Direct `perry compile` commands do not read the BornEngine CLI profile.
+SQLite is an opt-in native feature. Pass `--native-features sqlite` to `new` or `init`, or add `sqlite` to `[bornengine].native_features` in an existing project's `perry.toml`. The default project does not compile the optional native SQLite dependency. `sqlite` enables native database support. Web/WASM keeps its existing behavior and uses its prebuilt engine package. Other custom engine Cargo features, such as `debug-ui`, can be set directly in `native_features`. Direct `perry compile` commands do not read the BornEngine CLI profile.
 
 ## Native build cache and development profiles
 
