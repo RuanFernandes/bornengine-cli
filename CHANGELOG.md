@@ -2,6 +2,13 @@
 
 Notable changes to BornEngine CLI are documented here. CLI releases are versioned independently from the BornEngine engine.
 
+## 0.9.0
+
+### Removed
+
+- The `scripting` native feature. `--native-features` on `new` and `init` accepts only `sqlite`, matching BornEngine 0.23.0, which no longer ships embedded scripting. Remove `"scripting"` from `[bornengine].native_features` in existing projects.
+- The scripting sandbox section of the AI guide written to projects as `AGENTS.md`.
+
 ## 0.8.4
 
 ### Changed

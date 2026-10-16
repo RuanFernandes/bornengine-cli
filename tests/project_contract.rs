@@ -129,7 +129,7 @@ fn generated_perry_config_serializes_selected_native_features() {
                 engine_package: "@bornengine/engine".to_owned(),
                 engine_spec: "0.12.0".to_owned(),
                 game_kind,
-                native_features: vec!["sqlite".to_owned(), "scripting".to_owned()],
+                native_features: vec!["sqlite".to_owned()],
             },
         )
         .unwrap();
@@ -142,10 +142,7 @@ fn generated_perry_config_serializes_selected_native_features() {
         );
         assert_eq!(
             perry["bornengine"]["native_features"].as_array().unwrap(),
-            &[
-                toml::Value::String("sqlite".into()),
-                toml::Value::String("scripting".into())
-            ]
+            &[toml::Value::String("sqlite".into())]
         );
     }
 }

@@ -288,10 +288,8 @@ fn validate_spec(spec: &ProjectSpec) -> Result<()> {
         bail!("engine dependency specification cannot be empty");
     }
     for feature in &spec.native_features {
-        if !matches!(feature.as_str(), "sqlite" | "scripting") {
-            bail!(
-                "unsupported BornEngine native feature `{feature}`; supported features: sqlite, scripting"
-            );
+        if feature != "sqlite" {
+            bail!("unsupported BornEngine native feature `{feature}`; supported features: sqlite");
         }
     }
     if !spec.native_features.is_empty() && spec.engine_package != "@bornengine/engine" {

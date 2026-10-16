@@ -19,7 +19,7 @@ fn engine_project(root: &std::path::Path) -> std::path::PathBuf {
     .unwrap();
     fs::write(
         root.join("perry.toml"),
-        "[bornengine]\nnative_profile = \"2d\"\nnative_features = [\"sqlite\", \"scripting\"]\n",
+        "[bornengine]\nnative_profile = \"2d\"\nnative_features = [\"sqlite\", \"debug-ui\"]\n",
     )
     .unwrap();
     let engine = root.join("node_modules/@bornengine/engine");
@@ -162,7 +162,7 @@ fn cache_warm_uses_the_selected_engine_features_profile_cache_and_jobs_without_p
     );
     assert!(output.lines().any(|line| line == "--features"), "{output}");
     assert!(
-        output.lines().any(|line| line == "mp3,sqlite,scripting"),
+        output.lines().any(|line| line == "mp3,sqlite,debug-ui"),
         "{output}"
     );
     assert!(
@@ -212,7 +212,7 @@ fn cache_warm_uses_the_selected_engine_features_profile_cache_and_jobs_without_p
     assert!(
         fast_output
             .lines()
-            .any(|line| line == "mp3,sqlite,scripting,dev"),
+            .any(|line| line == "mp3,sqlite,debug-ui,dev"),
         "{fast_output}"
     );
 }

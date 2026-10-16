@@ -101,17 +101,12 @@ fn init_accepts_the_game_profile_and_defaults_to_two_dimensional() {
         }
     ));
 
-    let optional = Cli::try_parse_from([
-        "bornengine",
-        "init",
-        "--native-features",
-        "sqlite,scripting",
-    ])
-    .unwrap();
+    let optional =
+        Cli::try_parse_from(["bornengine", "init", "--native-features", "sqlite"]).unwrap();
     assert!(matches!(
         optional.command.unwrap(),
         Commands::Init { native_features, .. }
-            if native_features == ["sqlite", "scripting"]
+            if native_features == ["sqlite"]
     ));
 }
 
@@ -409,18 +404,13 @@ fn native_build_commands_reject_non_positive_job_counts() {
 
 #[test]
 fn new_accepts_only_known_optional_native_features() {
-    let parsed = Cli::try_parse_from([
-        "bornengine",
-        "new",
-        "MyGame",
-        "--native-features",
-        "sqlite,scripting",
-    ])
-    .unwrap();
+    let parsed =
+        Cli::try_parse_from(["bornengine", "new", "MyGame", "--native-features", "sqlite"])
+            .unwrap();
     assert!(matches!(
         parsed.command.unwrap(),
         Commands::New { native_features, .. }
-            if native_features == ["sqlite", "scripting"]
+            if native_features == ["sqlite"]
     ));
 
     assert!(
@@ -430,6 +420,16 @@ fn new_accepts_only_known_optional_native_features() {
             "MyGame",
             "--native-features",
             "rigid-body-magic",
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "bornengine",
+            "new",
+            "MyGame",
+            "--native-features",
+            "scripting",
         ])
         .is_err()
     );
